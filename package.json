@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Generic, dependency-injected browser Cognito client",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
