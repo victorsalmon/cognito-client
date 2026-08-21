@@ -1,5 +1,8 @@
 {
-  "name": "cognito-client",
+  "name": "@clocklobster/cognito-client",
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "1.0.0",
   "description": "Generic, dependency-injected browser AWS Cognito client — sign-up, sign-in, session restore/refresh, NEW_PASSWORD_REQUIRED challenge, forgot/reset password",
   "license": "MIT",

@@ -96,9 +96,9 @@ Every product concern is injected:
 ## Install
 
 ```bash
-npm install cognito-client
+npm install @clocklobster/cognito-client
 # or
-pnpm add cognito-client
+pnpm add @clocklobster/cognito-client
 ```
 
 ### Peer requirement
@@ -121,7 +121,7 @@ npm install amazon-cognito-identity-js
 ## Quick start
 
 ```typescript
-import { CognitoClient } from 'cognito-client';
+import { CognitoClient } from '@clocklobster/cognito-client';
 // Load the SDK — as a browser global, or via import:
 // import * as AmazonCognitoIdentity from 'amazon-cognito-identity-js';
 
@@ -223,7 +223,7 @@ const cognito = new CognitoClient({
 ### `CognitoClient`
 
 ```typescript
-import { CognitoClient } from 'cognito-client';
+import { CognitoClient } from '@clocklobster/cognito-client';
 
 const cognito = new CognitoClient(options);
 ```
