@@ -1,9 +1,29 @@
 {
   "name": "cognito-client",
   "version": "1.0.0",
-  "description": "Generic, dependency-injected browser Cognito client",
-  "private": true,
-  "license": "UNLICENSED",
+  "description": "Generic, dependency-injected browser AWS Cognito client — sign-up, sign-in, session restore/refresh, NEW_PASSWORD_REQUIRED challenge, forgot/reset password",
+  "license": "MIT",
+  "author": "Victor Salmon",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/victorsalmon/cognito-client.git"
+  },
+  "homepage": "https://github.com/victorsalmon/cognito-client#readme",
+  "bugs": {
+    "url": "https://github.com/victorsalmon/cognito-client/issues"
+  },
+  "keywords": [
+    "aws",
+    "cognito",
+    "authentication",
+    "browser",
+    "dependency-injection",
+    "sign-in",
+    "signup",
+    "oauth",
+    "token",
+    "session"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
