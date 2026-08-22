@@ -2,6 +2,8 @@ node_modules/
 dist/
 stryker-tmp/
 stryker-report/
+pnpm-lock.yaml
+pnpm-workspace.yaml
 *.log
 .DS_Store
 .env
