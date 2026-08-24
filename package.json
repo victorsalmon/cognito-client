@@ -15,6 +15,7 @@
   "bugs": {
     "url": "https://github.com/victorsalmon/cognito-client/issues"
   },
+  "packageManager": "pnpm@11.22.0",
   "keywords": [
     "aws",
     "cognito",
