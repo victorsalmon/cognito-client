@@ -197,7 +197,7 @@ export class CognitoClient {
     this.initPool();
     return new Promise((resolve, reject) => {
       this.pool!.signUp(email, password, attributeList, null, (err, result) => {
-        if (err) return reject(this.options.errorMapper(err));
+        if (err) return this.rejectWithMappedError(reject, err);
         resolve({
           userConfirmed: result!.userConfirmed,
           userSub: result!.userSub,
@@ -215,7 +215,7 @@ export class CognitoClient {
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.confirmRegistration(code, true, (err, _result) => {
-        if (err) return reject(this.options.errorMapper(err));
+        if (err) return this.rejectWithMappedError(reject, err);
         resolve();
       });
     });
@@ -241,11 +241,9 @@ export class CognitoClient {
           // so that after the post-login redirect, getSession() can restore it.
           cognitoUser.setSignInUserSession(session);
           this.setTokensFromSession(session, email);
-          resolve({ challenge: null, idToken: this.idToken!, accessToken: this.accessToken! });
+          resolve({ challenge: null, ...this.currentTokens() });
         },
-        onFailure: (err) => {
-          reject(this.options.errorMapper(err));
-        },
+        onFailure: this.onFailureHandler(reject),
         newPasswordRequired: (userAttributes, requiredAttributes) => {
           // The user is authenticated but Cognito requires a new permanent password
           // (e.g. admin-created/invited users in FORCE_CHANGE_PASSWORD state). Surface
@@ -304,11 +302,11 @@ export class CognitoClient {
           user.setSignInUserSession(session);
           this.setTokensFromSession(session, user.getUsername());
           this.pendingChallengeUser = null;
-          resolve({ idToken: this.idToken!, accessToken: this.accessToken! });
+          resolve(this.currentTokens());
         },
         onFailure: (err) => {
           this.pendingChallengeUser = null;
-          reject(this.options.errorMapper(err));
+          this.rejectWithMappedError(reject, err);
         },
       });
     });
@@ -337,7 +335,7 @@ export class CognitoClient {
             return;
           }
           this.setTokensFromSession(session, cognitoUser.getUsername());
-          resolve({ idToken: this.idToken!, accessToken: this.accessToken!, user: this.currentUser! });
+          resolve({ ...this.currentTokens(), user: this.currentUser! });
         });
       } catch {
         // SDK threw synchronously (e.g. no cached refresh token). Treat as unauthenticated.
@@ -366,10 +364,10 @@ export class CognitoClient {
     return new Promise((resolve, reject) => {
       cognitoUser.getSession((err, session) => {
         if (err || !session || !session.isValid()) {
-          return reject(err ? this.options.errorMapper(err) : new Error('No valid cached session'));
+          return err ? this.rejectWithMappedError(reject, err) : reject(new Error('No valid cached session'));
         }
         this.setTokensFromSession(session, cognitoUser.getUsername());
-        resolve({ idToken: this.idToken!, accessToken: this.accessToken! });
+        resolve(this.currentTokens());
       });
     });
   }
@@ -386,7 +384,7 @@ export class CognitoClient {
     return new Promise((resolve, reject) => {
       cognitoUser.forgotPassword({
         onSuccess: () => resolve(),
-        onFailure: (err) => reject(this.options.errorMapper(err)),
+        onFailure: this.onFailureHandler(reject),
         inputVerificationCode: () => resolve(),
       });
     });
@@ -402,7 +400,7 @@ export class CognitoClient {
     return new Promise((resolve, reject) => {
       cognitoUser.confirmPassword(code, newPassword, {
         onSuccess: () => resolve(),
-        onFailure: (err) => reject(this.options.errorMapper(err)),
+        onFailure: this.onFailureHandler(reject),
       });
     });
   }
@@ -452,6 +450,25 @@ export class CognitoClient {
     this.options.navigate(target);
   }
 
+  /**
+   * Build an SDK `onFailure` callback that maps the error and rejects the owning
+   * promise. This keeps callback-based methods from duplicating the same arrow.
+   */
+  private onFailureHandler(reject: (reason?: unknown) => void): (err: unknown) => void {
+    return (err) => this.rejectWithMappedError(reject, err);
+  }
+
+  /** Map an SDK error through the injected errorMapper and reject the promise. */
+  private rejectWithMappedError(reject: (reason?: unknown) => void, err: unknown): void {
+    reject(this.options.errorMapper(err));
+  }
+
+  /** Return the tokens currently held in memory as a `SessionTokens` object. */
+  private currentTokens(): SessionTokens {
+    return { idToken: this.idToken!, accessToken: this.accessToken! };
+  }
+
+  /** Populate in-memory token state from a valid SDK session. */
   private setTokensFromSession(session: CognitoSessionLike, username: string): void {
     this.idToken = session.getIdToken().getJwtToken();
     this.accessToken = session.getAccessToken().getJwtToken();
