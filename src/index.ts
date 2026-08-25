@@ -121,9 +121,13 @@ export interface CognitoClientOptions {
   getCurrentPath?: () => string;
 }
 
-/** Resolve a pool-config value, honoring lazy suppliers. */
-function resolvePoolConfig(value: string | (() => string)): string {
-  return typeof value === 'function' ? value() : value;
+/**
+ * Resolve a value that may be a lazy supplier, using the current value at the
+ * point of call. This lets pool config and storage be supplied as functions
+ * resolved at first auth operation instead of at construction.
+ */
+function resolveSupplier<T>(value: T | (() => T)): T {
+  return typeof value === 'function' ? (value as () => T)() : value;
 }
 
 export class CognitoClient {
@@ -139,8 +143,16 @@ export class CognitoClient {
   constructor(private readonly options: CognitoClientOptions) {}
 
   private get storage(): Storage | undefined {
-    const s = typeof this.options.storage === 'function' ? this.options.storage() : this.options.storage;
-    return s || undefined;
+    return resolveSupplier(this.options.storage) ?? undefined;
+  }
+
+  /**
+   * Build the Storage option to spread into SDK constructors.
+   * Returns an empty object when no storage is configured so the spread is a
+   * no-op and the SDK falls back to its default storage behavior.
+   */
+  private buildStorageOption(): { Storage: Storage } | {} {
+    return this.storage ? { Storage: this.storage } : {};
   }
 
   private initPool(): void {
@@ -150,9 +162,9 @@ export class CognitoClient {
     // available at import time. By resolving at first use, the pool always sees
     // the current values.
     this.pool = new this.options.sdk.CognitoUserPool({
-      UserPoolId: resolvePoolConfig(this.options.userPoolId),
-      ClientId: resolvePoolConfig(this.options.clientId),
-      ...(this.storage ? { Storage: this.storage } : {}),
+      UserPoolId: resolveSupplier(this.options.userPoolId),
+      ClientId: resolveSupplier(this.options.clientId),
+      ...this.buildStorageOption(),
     });
   }
 
@@ -162,7 +174,7 @@ export class CognitoClient {
     return new this.options.sdk.CognitoUser({
       Username: username,
       Pool: this.pool!,
-      ...(this.storage ? { Storage: this.storage } : {}),
+      ...this.buildStorageOption(),
     });
   }
 
