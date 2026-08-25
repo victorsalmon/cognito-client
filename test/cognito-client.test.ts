@@ -337,3 +337,88 @@ describe('CognitoClient — product neutrality', () => {
     );
   });
 });
+
+describe('CognitoClient – final mutation-killing tests', () => {
+  it('confirmSignUp rejects when the SDK returns an error', async () => {
+    const { sdk } = installMockSdk({
+      // Override the default success callback with an error.
+      // We re-implement confirmRegistration so it calls back with an error.
+    });
+    // Reaching into the mock to change the confirmRegistration callback is
+    // awkward; instead create a custom SDK mock for this one test.
+    const CognitoUser = vi.fn(function (this: any, data: any) {
+      this.Username = data.Username;
+      this.Pool = data.Pool;
+      this.confirmRegistration = vi.fn((_code: string, _force: boolean, cb: (err: unknown) => void) =>
+        cb({ code: 'CodeMismatchException' })
+      );
+    });
+    const CognitoUserPool = vi.fn(function (this: any, data: any) {
+      this.data = data;
+      this.getCurrentUser = vi.fn(() => null);
+    });
+    const customSdk = { CognitoUserPool, CognitoUser, AuthenticationDetails: vi.fn() } as unknown as CognitoSdk;
+    const client = makeClient({ sdk: customSdk });
+    await expect(client.confirmSignUp('test@example.com', '123456')).rejects.toThrow('CodeMismatchException');
+  });
+
+  it('getSession resolves null when there is no current user', async () => {
+    const { sdk } = installMockSdk({ noCurrentUser: true });
+    const client = makeClient({ sdk });
+    const session = await client.getSession();
+    expect(session).toBeNull();
+  });
+
+  it('getSession clears stale session when getSession returns an error but a valid session', async () => {
+    const { sdk, captured } = installMockSdk({
+      getSession: (cb) => cb({ code: 'NotAuthorizedException' }, makeSession('err-id', 'err-access')),
+    });
+    const client = makeClient({ sdk });
+    const session = await client.getSession();
+    expect(session).toBeNull();
+    expect(captured.signOutCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('refreshSession rejects when getSession returns an error but a valid session', async () => {
+    const { sdk } = installMockSdk({
+      getSession: (cb) => cb({ code: 'NotAuthorizedException' }, makeSession('err-id', 'err-access')),
+    });
+    const client = makeClient({ sdk });
+    await expect(client.refreshSession()).rejects.toThrow('NotAuthorizedException');
+  });
+
+  it('forgotPassword resolves when the SDK uses the inputVerificationCode callback', async () => {
+    const CognitoUser = vi.fn(function (this: any, data: any) {
+      this.Username = data.Username;
+      this.Pool = data.Pool;
+      this.forgotPassword = vi.fn(({ inputVerificationCode }: any) => inputVerificationCode());
+    });
+    const CognitoUserPool = vi.fn(function (this: any) {
+      this.getCurrentUser = vi.fn(() => null);
+    });
+    const customSdk = { CognitoUserPool, CognitoUser, AuthenticationDetails: vi.fn() } as unknown as CognitoSdk;
+    const client = makeClient({ sdk: customSdk });
+    await expect(client.forgotPassword('test@example.com')).resolves.toBeUndefined();
+  });
+
+  it('signOut does not throw when there is no current user', () => {
+    const { sdk } = installMockSdk({ noCurrentUser: true });
+    const client = makeClient({ sdk });
+    client.signIn('test@example.com', 'Pass123!');
+    client.signOut();
+    expect(client.getIdToken()).toBeNull();
+  });
+
+  it('getSession clears tokens when getSession throws synchronously', async () => {
+    const { sdk } = installMockSdk({
+      getSession: () => {
+        throw new Error('synchronous throw');
+      },
+    });
+    const client = makeClient({ sdk });
+    client.signIn('test@example.com', 'Pass123!');
+    const session = await client.getSession();
+    expect(session).toBeNull();
+    expect(client.getIdToken()).toBeNull();
+  });
+});
