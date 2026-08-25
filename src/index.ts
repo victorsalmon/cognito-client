@@ -34,11 +34,13 @@ export type SignInResult =
       requiredAttributes: Record<string, unknown>;
     };
 
+/** Tokens returned on a successful sign-in or session refresh. */
 export interface SessionTokens {
   idToken: string;
   accessToken: string;
 }
 
+/** A session restored from the SDK's cached Storage, including the username. */
 export interface RestoredSession extends SessionTokens {
   user: string;
 }
@@ -58,6 +60,7 @@ export interface CognitoSdk {
   AuthenticationDetails: new (data: { Username: string; Password: string }) => unknown;
 }
 
+/** Minimal shape of the CognitoUserPool the core depends on. */
 export interface CognitoUserPoolLike {
   signUp(
     username: string,
@@ -69,6 +72,7 @@ export interface CognitoUserPoolLike {
   getCurrentUser(): CognitoUserLike | null;
 }
 
+/** Minimal shape of the CognitoUser the core depends on. */
 export interface CognitoUserLike {
   authenticateUser(
     authenticationDetails: unknown,
@@ -102,6 +106,7 @@ export interface CognitoUserLike {
   setSignInUserSession(session: CognitoSessionLike): void;
 }
 
+/** Minimal shape of the Cognito session the core depends on. */
 export interface CognitoSessionLike {
   getIdToken(): { getJwtToken(): string };
   getAccessToken(): { getJwtToken(): string };
@@ -178,6 +183,12 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Register a new user in the Cognito user pool.
+   *
+   * `attributeList` defaults to an empty list. On success, returns the user's
+   * `userConfirmed` flag and `userSub` identifier.
+   */
   signUp(
     email: string,
     password: string,
@@ -195,6 +206,10 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Confirm a sign-up using the verification code sent to the user's email or
+   * SMS. Calls `confirmRegistration(code, true, cb)` with alias creation forced.
+   */
   confirmSignUp(email: string, code: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
@@ -206,6 +221,12 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Authenticate a user with email and password.
+   *
+   * Returns tokens on success, or a `NEW_PASSWORD_REQUIRED` challenge that the
+   * caller must complete via `completeNewPassword()`.
+   */
   signIn(email: string, password: string): Promise<SignInResult> {
     this.initPool();
     const authDetails = new this.options.sdk.AuthenticationDetails({
@@ -293,6 +314,12 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Restore a cached session from the injected Storage.
+   *
+   * Returns the restored session and tokens, or `null` when there is no cached
+   * user or the cached session is invalid. Terminal failure clears stale tokens.
+   */
   getSession(): Promise<RestoredSession | null> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
@@ -320,6 +347,12 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Refresh the current session using the cached refresh token.
+   *
+   * Returns fresh tokens, or rejects when there is no cached user or the cached
+   * session cannot be refreshed.
+   */
   refreshSession(): Promise<SessionTokens> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
@@ -341,6 +374,12 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Initiate the forgot-password flow.
+   *
+   * Resolves when the verification code has been sent, which the SDK signals
+   * through either `onSuccess` or `inputVerificationCode`.
+   */
   forgotPassword(email: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
@@ -353,6 +392,10 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Complete the forgot-password flow by submitting the verification code and a
+   * new password.
+   */
   confirmNewPassword(email: string, code: string, newPassword: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
@@ -364,6 +407,7 @@ export class CognitoClient {
     });
   }
 
+  /** Sign the current user out of the SDK and clear all in-memory tokens. */
   signOut(): void {
     if (this.pool) {
       const cognitoUser = this.pool.getCurrentUser();
@@ -379,14 +423,17 @@ export class CognitoClient {
     this.pendingChallengeUser = null;
   }
 
+  /** Return the current user's username, or `null` when not signed in. */
   getUser(): string | null {
     return this.currentUser || null;
   }
 
+  /** Return the current ID token, or `null` when not signed in. */
   getIdToken(): string | null {
     return this.idToken || null;
   }
 
+  /** Return the current access token, or `null` when not signed in. */
   getAccessToken(): string | null {
     return this.accessToken || null;
   }
