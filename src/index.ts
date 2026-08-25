@@ -25,6 +25,24 @@
  *     (`SignInResult.challenge`), not an error.
  */
 
+/** Domain challenge name surfaced when a user must set a new permanent password. */
+const NEW_PASSWORD_REQUIRED = 'NEW_PASSWORD_REQUIRED' as const;
+
+/** Error message shown when `completeNewPassword` is called without a challenge in flight. */
+const NO_PENDING_CHALLENGE_MESSAGE = 'No pending password challenge. Please sign in again.';
+
+/** Error message shown when `refreshSession` has no cached user. */
+const NO_CACHED_SESSION_MESSAGE = 'No cached session to refresh';
+
+/** Error message shown when `refreshSession` cannot retrieve a valid cached session. */
+const NO_VALID_CACHED_SESSION_MESSAGE = 'No valid cached session';
+
+/** No validation data is supplied to `signUp`. */
+const NO_VALIDATION_DATA = null;
+
+/** Force alias creation when confirming sign-up. */
+const FORCE_ALIAS_CREATION = true;
+
 /** SignIn result — either tokens (success) or a challenge that must be completed. */
 export type SignInResult =
   | { challenge: null; idToken: string; accessToken: string }
@@ -196,7 +214,7 @@ export class CognitoClient {
   ): Promise<{ userConfirmed: boolean; userSub: string }> {
     this.initPool();
     return new Promise((resolve, reject) => {
-      this.pool!.signUp(email, password, attributeList, null, (err, result) => {
+      this.pool!.signUp(email, password, attributeList, NO_VALIDATION_DATA, (err, result) => {
         if (err) return this.rejectWithMappedError(reject, err);
         resolve({
           userConfirmed: result!.userConfirmed,
@@ -214,7 +232,7 @@ export class CognitoClient {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
-      cognitoUser.confirmRegistration(code, true, (err, _result) => {
+      cognitoUser.confirmRegistration(code, FORCE_ALIAS_CREATION, (err, _result) => {
         if (err) return this.rejectWithMappedError(reject, err);
         resolve();
       });
@@ -252,7 +270,7 @@ export class CognitoClient {
           // challenge can be completed without re-authenticating.
           this.pendingChallengeUser = cognitoUser;
           resolve({
-            challenge: 'NEW_PASSWORD_REQUIRED',
+            challenge: NEW_PASSWORD_REQUIRED,
             userAttributes,
             requiredAttributes,
           });
@@ -277,7 +295,7 @@ export class CognitoClient {
     userAttributes: Record<string, unknown> = {},
   ): Promise<SessionTokens> {
     if (!this.pendingChallengeUser) {
-      throw new Error('No pending password challenge. Please sign in again.');
+      throw new Error(NO_PENDING_CHALLENGE_MESSAGE);
     }
     const user = this.pendingChallengeUser;
     // Cognito rejects resending the `sub` attribute (it's read-only / server-managed).
@@ -354,7 +372,7 @@ export class CognitoClient {
   refreshSession(): Promise<SessionTokens> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
-    if (!cognitoUser) return Promise.reject(new Error('No cached session to refresh'));
+    if (!cognitoUser) return Promise.reject(new Error(NO_CACHED_SESSION_MESSAGE));
 
     // Load the cached session first. If the id token is still valid, getSession
     // returns it. If it is expired, getSession uses the cached refresh token to
@@ -364,7 +382,7 @@ export class CognitoClient {
     return new Promise((resolve, reject) => {
       cognitoUser.getSession((err, session) => {
         if (err || !session || !session.isValid()) {
-          return err ? this.rejectWithMappedError(reject, err) : reject(new Error('No valid cached session'));
+          return err ? this.rejectWithMappedError(reject, err) : reject(new Error(NO_VALID_CACHED_SESSION_MESSAGE));
         }
         this.setTokensFromSession(session, cognitoUser.getUsername());
         resolve(this.currentTokens());
