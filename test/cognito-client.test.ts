@@ -278,6 +278,15 @@ describe('CognitoClient — signIn / session', () => {
     expect(tokens).toHaveProperty('accessToken', 'restored-access-token');
   });
 
+  it('clears a stale session (invalid) via signOut on refresh failure', async () => {
+    const { sdk, captured } = installMockSdk({ invalidSession: true });
+    const client = makeClient({ sdk });
+    await expect(client.refreshSession()).rejects.toThrow();
+    expect(captured.signOutCalls).toBeGreaterThanOrEqual(1);
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+  });
+
   it('rejects refreshSession when no cached user exists', async () => {
     const { sdk } = installMockSdk({ noCurrentUser: true });
     const client = makeClient({ sdk });
@@ -319,8 +328,71 @@ describe('CognitoClient — sign-out / navigation', () => {
   });
 });
 
-describe('CognitoClient — product neutrality', () => {
-  it('exposes no product role derivation or route policy', () => {
+describe('CognitoClient — ensureSession page-load gate', () => {
+  it('resolves the live session without navigating', async () => {
+    const { sdk } = installMockSdk({});
+    const navigate = vi.fn();
+    const client = makeClient({ sdk, navigate });
+    const session = await client.ensureSession('/signin');
+    expect(session).not.toBeNull();
+    expect(session).toHaveProperty('idToken', 'restored-id-token');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('resolves null and redirects when no cached user exists', async () => {
+    const { sdk } = installMockSdk({ noCurrentUser: true });
+    const navigate = vi.fn();
+    const client = makeClient({ sdk, navigate, getCurrentPath: () => '/portal' });
+    await expect(client.ensureSession('/signin')).resolves.toBeNull();
+    expect(navigate).toHaveBeenCalledWith('/signin?returnTo=' + encodeURIComponent('/portal'));
+  });
+
+  it('resolves null and redirects when the cached session is invalid', async () => {
+    const { sdk } = installMockSdk({ invalidSession: true });
+    const navigate = vi.fn();
+    const client = makeClient({ sdk, navigate });
+    await expect(client.ensureSession('/signin')).resolves.toBeNull();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(client.getIdToken()).toBeNull();
+  });
+
+  it('never throws — SDK failures become null + redirect', async () => {
+    const { sdk } = installMockSdk({
+      getSession: () => {
+        throw new Error('sdk exploded');
+      },
+    });
+    const navigate = vi.fn();
+    const client = makeClient({ sdk, navigate });
+    await expect(client.ensureSession('/signin')).resolves.toBeNull();
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('isTokenExpired — fail-closed JWT expiry probe', () => {
+  function jwt(exp: number | null): string {
+    const payload: Record<string, unknown> = { sub: 'synthetic-subject' };
+    if (exp !== null) payload.exp = exp;
+    const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_');
+    return `header.${b64}.signature`;
+  }
+
+  it('reports expired and valid tokens around the skew window', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    const nowSec = Math.floor(Date.now() / 1000);
+    expect(isTokenExpired(jwt(nowSec - 3600))).toBe(true);
+    expect(isTokenExpired(jwt(nowSec + 3600))).toBe(false);
+  });
+
+  it('fails closed on malformed tokens and missing exp', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    expect(isTokenExpired('not-a-jwt')).toBe(true);
+    expect(isTokenExpired(jwt(null))).toBe(true);
+    expect(isTokenExpired('')).toBe(true);
+  });
+});
+
+describe('CognitoClient — product neutrality', () => {  it('exposes no product role derivation or route policy', () => {
     const { sdk } = installMockSdk({});
     const client = makeClient({ sdk });
     const proto = Object.getPrototypeOf(client) as Record<string, unknown>;

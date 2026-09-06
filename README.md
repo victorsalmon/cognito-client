@@ -31,6 +31,7 @@ routes, no default targets — every dependency is injected.**
   - [`signIn(email, password)`](#signinemail-password)
   - [`completeNewPassword(newPassword, userAttributes?)`](#completenewpasswordnewpassword-userattributes)
   - [`getSession()`](#getsession)
+  - [`ensureSession(loginUrl)`](#ensuresessionloginurl)
   - [`refreshSession()`](#refreshsession)
   - [`forgotPassword(email)`](#forgotpasswordemail)
   - [`confirmNewPassword(email, code, newPassword)`](#confirmnewpasswordemail-code-newpassword)
@@ -328,6 +329,28 @@ if (session) {
 - On synchronous SDK throw (no cached refresh token): clears tokens, returns `null`
 
 ---
+
+### `ensureSession(loginUrl)`
+
+Canonical async page-load gate for protected pages. Unlike a sync token-presence
+check (which passes with a stale-but-cached token after credentials timeout,
+letting the page fetch and render private data before the 401 path discovers
+the dead session), this validates the session through the SDK first.
+
+```typescript
+const session = await cognito.ensureSession('/login.html');
+if (!session) return; // dead session — already redirected to login
+// live session (refreshed via the stored refresh token when needed)
+console.log('ID token:', session.idToken);
+```
+
+**Returns:** `RestoredSession | null` — never throws.
+
+- Live session: returned as `{ idToken, accessToken, user }`, refreshing via
+  the stored refresh token when the id token expired but the refresh token is
+  still alive (seamless, no redirect).
+- Dead session: signs out the stale SDK state, redirects to `loginUrl` (with
+  `?returnTo=` preservation), returns `null` — before any API fetch fires.
 
 ### `refreshSession()`
 

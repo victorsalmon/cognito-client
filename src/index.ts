@@ -126,6 +126,31 @@ function resolvePoolConfig(value: string | (() => string)): string {
   return typeof value === 'function' ? value() : value;
 }
 
+/** Clock skew (seconds) tolerated when judging a JWT expired. */
+const TOKEN_EXPIRY_SKEW_SEC = 60;
+
+/**
+ * Fail-closed JWT expiry probe (no signature verification — cryptographic
+ * validation belongs to the backend and the Cognito SDK; this is purely a
+ * render-gating heuristic so a dead token never passes a page-load guard).
+ *
+ * Returns true when the token is expired OR cannot be parsed / carries no
+ * numeric `exp` claim. Real Cognito id tokens always carry `exp`.
+ */
+export function isTokenExpired(token: string, nowMs: number = Date.now()): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return true;
+    const payload = JSON.parse(
+      atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')),
+    ) as { exp?: unknown };
+    if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) return true;
+    return payload.exp * 1000 <= nowMs + TOKEN_EXPIRY_SKEW_SEC * 1000;
+  } catch {
+    return true;
+  }
+}
+
 export class CognitoClient {
   private pool: CognitoUserPoolLike | null = null;
   private currentUser: string | null = null;
@@ -308,6 +333,29 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Canonical async page-load gate for protected pages.
+   *
+   * Unlike a sync token-presence check (which passes with a stale-but-cached
+   * token after credentials timeout, letting the page fetch and render
+   * private data before the 401 path discovers the dead session), this
+   * validates the session through the SDK: a live session is returned
+   * (refreshing via the stored refresh token when the id token expired but
+   * the refresh token is still alive — seamless, no redirect), while a truly
+   * dead session resolves null AND redirects to `loginUrl` immediately —
+   * before any API fetch fires. Never throws.
+   */
+  async ensureSession(loginUrl: string): Promise<RestoredSession | null> {
+    try {
+      const session = await this.getSession();
+      if (!session) this.redirectToLogin(loginUrl);
+      return session;
+    } catch {
+      this.redirectToLogin(loginUrl);
+      return null;
+    }
+  }
+
   refreshSession(): Promise<SessionTokens> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
@@ -321,6 +369,10 @@ export class CognitoClient {
     return new Promise((resolve, reject) => {
       cognitoUser.getSession((err, session) => {
         if (err || !session || !session.isValid()) {
+          // Terminal failure — same cleanup as getSession: a stale/invalid
+          // cached session must not leave token state behind.
+          cognitoUser.signOut();
+          this.clearTokens();
           return reject(err ? this.options.errorMapper(err) : new Error('No valid cached session'));
         }
         this.setTokensFromSession(session, cognitoUser.getUsername());
