@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ensureSession(loginUrl)` canonical async page-load gate: validates the
+  session through the SDK (transparent refresh when the refresh token is
+  alive), otherwise signs out, redirects to `loginUrl` with `?returnTo=`
+  preservation, and returns `null` — before any API fetch fires. Never
+  throws. Prevents the reload-after-timeout flash where a stale cached token
+  passed a sync presence check and private data rendered before the 401 path
+  redirected.
+- `isTokenExpired(token, nowMs?)` fail-closed JWT expiry probe (no signature
+  verification): `true` when expired, unparseable, or missing a numeric `exp`.
+
 ## [1.0.0] - 2026-08-23
 
 ### Added
