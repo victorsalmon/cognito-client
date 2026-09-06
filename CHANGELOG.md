@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redirected.
 - `isTokenExpired(token, nowMs?)` fail-closed JWT expiry probe (no signature
   verification): `true` when expired, unparseable, or missing a numeric `exp`.
+- `docs/api.md` per-method reference (signatures, returns/throws, token-lifecycle
+  invariants) linked back to the README quick start.
+
+### Changed
+
+- Hardened publish metadata in `package.json`: added `engines` (`node >= 18`),
+  `exports` map (`./dist/index.js` + types), `sideEffects: false`, and included
+  `README.md` and `LICENSE` alongside `dist` in `files`. No script or dependency
+  changes.
 
 ## [1.0.0] - 2026-08-23
 
