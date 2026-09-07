@@ -32,3 +32,33 @@ jobs:
 
       - name: Test
         run: corepack pnpm test
+
+      - name: Dependency audit (blocking)
+        run: corepack pnpm audit --audit-level=critical
+
+      - name: Dependency audit (advisory)
+        continue-on-error: true
+        run: corepack pnpm audit --audit-level=high
+
+      - name: Secret scan
+        run: |
+          echo "Scanning working tree for secrets..."
+          PATTERN_LIT='aws_secret_access''_key'
+          if grep -rE -n --exclude-dir=.git --exclude-dir=node_modules --exclude=.git \
+            -e 'AKIA[0-9A-Z]{16}' \
+            -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+            -e 'xox[bpas]-' \
+            -e 'ghp_[A-Za-z0-9]{20,}' \
+            -e 'sk-(live|test)-[A-Za-z0-9]{10,}' \
+            -e "$PATTERN_LIT" -- .; then
+            echo "Secret scan failed: potential secret pattern found above."
+            exit 1
+          fi
+          echo "Secret scan passed: no secret patterns found."
+
+      - name: Docs lint
+        run: |
+          test -f docs/plan-evidence.md || (echo "Docs lint failed: docs/plan-evidence.md missing." && exit 1)
+          grep -qF "startsWith('/')" README.md || (echo "Docs lint failed: README returnTo guard missing." && exit 1)
+          grep -qF "startsWith('//')" README.md || (echo "Docs lint failed: README protocol-relative rejection missing." && exit 1)
+          echo "Docs lint passed."

@@ -556,8 +556,11 @@ if (session) {
 // Login page (after successful signIn):
 const result = await cognito.signIn(email, password);
 if (result.challenge === null) {
-  // Read ?returnTo= from the URL and navigate there
-  const returnTo = new URLSearchParams(window.location.search).get('returnTo') || '/';
+  // Validate ?returnTo= before navigating: same-origin path only.
+  // Rejects absolute URLs (https://...), protocol-relative URLs (//...),
+  // backslash escapes, and control characters — falls back to '/'.
+  const raw = new URLSearchParams(window.location.search).get('returnTo') || '/';
+  const returnTo = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/';
   window.location.href = returnTo;
 }
 ```
