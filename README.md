@@ -556,12 +556,28 @@ if (session) {
 // Login page (after successful signIn):
 const result = await cognito.signIn(email, password);
 if (result.challenge === null) {
-  // Validate ?returnTo= before navigating: same-origin path only.
-  // Rejects absolute URLs (https://...), protocol-relative URLs (//...),
-  // backslash escapes, and control characters — falls back to '/'.
-  const raw = new URLSearchParams(window.location.search).get('returnTo') || '/';
-  const returnTo = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/';
-  window.location.href = returnTo;
+  // Validate ?returnTo= before navigating: same-origin path only (see
+  // docs/plan-evidence.md validation rules — rejects absolute URLs,
+  // protocol-relative URLs, backslash escapes, control chars, and
+  // scheme/absolute URLs with ':' before any '/?#'; falls back to '/').
+  function resolveReturnTo(raw: string | null): string {
+    if (!raw) return '/';
+    let v = raw;
+    try {
+      v = decodeURIComponent(raw);
+    } catch {
+      return '/';
+    }
+    if (!v.startsWith('/') || v.startsWith('//') || v.includes('\\')) return '/';
+    if (/[\x00-\x1f\x7f]/.test(v)) return '/';
+    const q = v.search(/[\/?#]/);
+    const pre = q === -1 ? v : v.slice(0, q);
+    if (pre.includes(':')) return '/';
+    return raw;
+  }
+  window.location.href = resolveReturnTo(
+    new URLSearchParams(window.location.search).get('returnTo'),
+  );
 }
 ```
 
@@ -582,6 +598,27 @@ if (result.challenge === null) {
   user whose tokens are dead.
 - **`sub` is scrubbed** — `completeNewPassword` strips the `sub` attribute from
   `userAttributes` before sending (Cognito rejects resending it).
+
+## Consumer data-handling
+
+- **What is stored where** — runtime `idToken` / `accessToken` (and
+  `currentUser`) live in memory only on the `CognitoClient` instance; they are
+  never written to `Storage`, `localStorage`, cookies, URLs, or logs. Only the
+  SDK session (refresh token) lives in the injected `Storage` so it survives
+  the post-login redirect.
+- **Tab-close clearing** — bind the injected `storage` to `sessionStorage`,
+  never `localStorage`, so the SDK session clears when the tab closes. Do not
+  copy `getIdToken()` / `getAccessToken()` into storage, URLs, or telemetry
+  yourself; re-read via the accessors or `refreshSession()` when expired.
+- **`errorMapper` PII / user-enumeration caution** — do not echo raw SDK
+  messages to the UI. Distinguishing `UserNotFoundException` ("no account")
+  from `NotAuthorizedException` ("wrong password") leaks account enumeration;
+  prefer a single generic message (e.g. "Incorrect email or password.") unless
+  your product explicitly accepts the enumeration trade-off.
+- **HTTPS / CSP host-page expectations** — serve the host page over HTTPS,
+  set a `Content-Security-Policy` that disallows inline-script open redirects,
+  and validate `?returnTo=` with `resolveReturnTo` (same-origin path only)
+  before assigning to `window.location.href`.
 
 ---
 
@@ -624,10 +661,20 @@ pnpm test             # vitest run
 pnpm run build        # tsc -p tsconfig.build.json
 ```
 
+`postinstall` runs `tsc -p tsconfig.build.json` on every install, so `dist/`
+is rebuilt automatically after `pnpm install`.
+
+### CI re-run notes
+
+- Dependency audit (blocking): `corepack pnpm audit --audit-level=critical`
+- Dependency audit (advisory, non-blocking): `corepack pnpm audit --audit-level=high`
+  (`continue-on-error: true` in CI — re-run locally to triage new advisories)
+- Secret scan (fail-closed): `grep -rE -n --exclude-dir=.git --exclude-dir=node_modules -e 'AKIA[0-9A-Z]{16}' -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -- .`
+
 ### Requirements
 
-- Node.js >= 18
-- pnpm (or npm/yarn — the package has no runtime dependencies)
+- Node.js 22 (see `.nvmrc`)
+- pnpm 11 via corepack (or npm/yarn — the package has no runtime dependencies)
 - TypeScript >= 5
 
 ---
@@ -637,14 +684,21 @@ pnpm run build        # tsc -p tsconfig.build.json
 ```text
 cognito-client/
 ├── src/
-│   └── index.ts      # CognitoClient + all types (single file, ~400 lines)
+│   └── index.ts      # CognitoClient + all types (single file, 453 lines)
 ├── test/
 │   ├── cognito-client.test.ts          # 19 unit tests
 │   └── cognito-client.property.test.ts # 22 property tests
+├── examples/
+│   └── quickstart.ts # offline consumer wiring (injected SDK stub, allowlisted returnTo)
+├── docs/
+│   ├── api.md          # method-level API companion
+│   └── plan-evidence.md # canonical returnTo validation rules
 ├── package.json
-├── tsconfig.json
-├── tsconfig.build.json
+├── tsconfig.json         # typechecks src + test + examples (noEmit)
+├── tsconfig.build.json   # src-only build (never ships examples to dist)
 ├── vitest.config.ts
+├── stryker.config.json
+├── CHANGELOG.md
 ├── LICENSE
 └── README.md
 ```
