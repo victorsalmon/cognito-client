@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.5.0",
+  "version": "1.1.2",
   "description": "Generic, dependency-injected browser AWS Cognito client — sign-up, sign-in, session restore/refresh, NEW_PASSWORD_REQUIRED challenge, forgot/reset password",
   "license": "MIT",
   "author": "Victor Salmon",

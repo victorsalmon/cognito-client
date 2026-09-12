@@ -5,13 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-09-12
+## [1.1.2] - 2026-09-12
+
+### Added
+
+- CI: gitleaks full-history secret-scan job (checksum-verified binary),
+  alongside the ci-hardening lane's dependency-audit, working-tree
+  secret-scan, and docs-lint steps.
 
 ### Changed
 
-- Re-baselined the package version to 0.x — the API is pre-stable until
-  consumed and proven by a second product. Supersedes the 1.0.x/1.1.0
-  numbering.
+- Continues the published 1.x line. The 0.5.0 renumbering below was
+  reverted before any 0.x publish — its git tag remains for history only.
+
+## [1.1.0] - 2026-09-06
 
 ### Added
 
@@ -47,5 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency-injected design: SDK namespace, pool config, storage, error mapper, and navigation hooks are all supplied by the consumer.
 - Product-neutrality tests to keep the core free of product-specific roles, routes, and copy.
 
-[0.5.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v0.5.0
+## [0.5.0] - 2026-09-12 (git tag only — never published)
+
+### Changed
+
+- Brief re-baselining of the package version to 0.x, superseded same-day by
+  1.1.2 to continue the published npm line.
+
+[1.1.2]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.1.2
+[1.1.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.1.0
 [1.0.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.0.0
+[0.5.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v0.5.0
