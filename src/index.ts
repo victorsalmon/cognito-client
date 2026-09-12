@@ -25,6 +25,24 @@
  *     (`SignInResult.challenge`), not an error.
  */
 
+/** Domain challenge name surfaced when a user must set a new permanent password. */
+const NEW_PASSWORD_REQUIRED = 'NEW_PASSWORD_REQUIRED' as const;
+
+/** Error message shown when `completeNewPassword` is called without a challenge in flight. */
+const NO_PENDING_CHALLENGE_MESSAGE = 'No pending password challenge. Please sign in again.';
+
+/** Error message shown when `refreshSession` has no cached user. */
+const NO_CACHED_SESSION_MESSAGE = 'No cached session to refresh';
+
+/** Error message shown when `refreshSession` cannot retrieve a valid cached session. */
+const NO_VALID_CACHED_SESSION_MESSAGE = 'No valid cached session';
+
+/** No validation data is supplied to `signUp`. */
+const NO_VALIDATION_DATA = null;
+
+/** Force alias creation when confirming sign-up. */
+const FORCE_ALIAS_CREATION = true;
+
 /** SignIn result — either tokens (success) or a challenge that must be completed. */
 export type SignInResult =
   | { challenge: null; idToken: string; accessToken: string }
@@ -34,11 +52,13 @@ export type SignInResult =
       requiredAttributes: Record<string, unknown>;
     };
 
+/** Tokens returned on a successful sign-in or session refresh. */
 export interface SessionTokens {
   idToken: string;
   accessToken: string;
 }
 
+/** A session restored from the SDK's cached Storage, including the username. */
 export interface RestoredSession extends SessionTokens {
   user: string;
 }
@@ -58,6 +78,7 @@ export interface CognitoSdk {
   AuthenticationDetails: new (data: { Username: string; Password: string }) => unknown;
 }
 
+/** Minimal shape of the CognitoUserPool the core depends on. */
 export interface CognitoUserPoolLike {
   signUp(
     username: string,
@@ -69,6 +90,7 @@ export interface CognitoUserPoolLike {
   getCurrentUser(): CognitoUserLike | null;
 }
 
+/** Minimal shape of the CognitoUser the core depends on. */
 export interface CognitoUserLike {
   authenticateUser(
     authenticationDetails: unknown,
@@ -102,6 +124,7 @@ export interface CognitoUserLike {
   setSignInUserSession(session: CognitoSessionLike): void;
 }
 
+/** Minimal shape of the Cognito session the core depends on. */
 export interface CognitoSessionLike {
   getIdToken(): { getJwtToken(): string };
   getAccessToken(): { getJwtToken(): string };
@@ -121,9 +144,13 @@ export interface CognitoClientOptions {
   getCurrentPath?: () => string;
 }
 
-/** Resolve a pool-config value, honoring lazy suppliers. */
-function resolvePoolConfig(value: string | (() => string)): string {
-  return typeof value === 'function' ? value() : value;
+/**
+ * Resolve a value that may be a lazy supplier, using the current value at the
+ * point of call. This lets pool config and storage be supplied as functions
+ * resolved at first auth operation instead of at construction.
+ */
+function resolveSupplier<T>(value: T | (() => T)): T {
+  return typeof value === 'function' ? (value as () => T)() : value;
 }
 
 /** Clock skew (seconds) tolerated when judging a JWT expired. */
@@ -164,8 +191,16 @@ export class CognitoClient {
   constructor(private readonly options: CognitoClientOptions) {}
 
   private get storage(): Storage | undefined {
-    const s = typeof this.options.storage === 'function' ? this.options.storage() : this.options.storage;
-    return s || undefined;
+    return resolveSupplier(this.options.storage) ?? undefined;
+  }
+
+  /**
+   * Build the Storage option to spread into SDK constructors.
+   * Returns an empty object when no storage is configured so the spread is a
+   * no-op and the SDK falls back to its default storage behavior.
+   */
+  private buildStorageOption(): { Storage: Storage } | {} {
+    return this.storage ? { Storage: this.storage } : {};
   }
 
   private initPool(): void {
@@ -175,9 +210,9 @@ export class CognitoClient {
     // available at import time. By resolving at first use, the pool always sees
     // the current values.
     this.pool = new this.options.sdk.CognitoUserPool({
-      UserPoolId: resolvePoolConfig(this.options.userPoolId),
-      ClientId: resolvePoolConfig(this.options.clientId),
-      ...(this.storage ? { Storage: this.storage } : {}),
+      UserPoolId: resolveSupplier(this.options.userPoolId),
+      ClientId: resolveSupplier(this.options.clientId),
+      ...this.buildStorageOption(),
     });
   }
 
@@ -187,10 +222,16 @@ export class CognitoClient {
     return new this.options.sdk.CognitoUser({
       Username: username,
       Pool: this.pool!,
-      ...(this.storage ? { Storage: this.storage } : {}),
+      ...this.buildStorageOption(),
     });
   }
 
+  /**
+   * Register a new user in the Cognito user pool.
+   *
+   * `attributeList` defaults to an empty list. On success, returns the user's
+   * `userConfirmed` flag and `userSub` identifier.
+   */
   signUp(
     email: string,
     password: string,
@@ -198,8 +239,8 @@ export class CognitoClient {
   ): Promise<{ userConfirmed: boolean; userSub: string }> {
     this.initPool();
     return new Promise((resolve, reject) => {
-      this.pool!.signUp(email, password, attributeList, null, (err, result) => {
-        if (err) return reject(this.options.errorMapper(err));
+      this.pool!.signUp(email, password, attributeList, NO_VALIDATION_DATA, (err, result) => {
+        if (err) return this.rejectWithMappedError(reject, err);
         resolve({
           userConfirmed: result!.userConfirmed,
           userSub: result!.userSub,
@@ -208,17 +249,27 @@ export class CognitoClient {
     });
   }
 
+  /**
+   * Confirm a sign-up using the verification code sent to the user's email or
+   * SMS. Calls `confirmRegistration(code, true, cb)` with alias creation forced.
+   */
   confirmSignUp(email: string, code: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
-      cognitoUser.confirmRegistration(code, true, (err, _result) => {
-        if (err) return reject(this.options.errorMapper(err));
+      cognitoUser.confirmRegistration(code, FORCE_ALIAS_CREATION, (err, _result) => {
+        if (err) return this.rejectWithMappedError(reject, err);
         resolve();
       });
     });
   }
 
+  /**
+   * Authenticate a user with email and password.
+   *
+   * Returns tokens on success, or a `NEW_PASSWORD_REQUIRED` challenge that the
+   * caller must complete via `completeNewPassword()`.
+   */
   signIn(email: string, password: string): Promise<SignInResult> {
     this.initPool();
     const authDetails = new this.options.sdk.AuthenticationDetails({
@@ -233,11 +284,9 @@ export class CognitoClient {
           // so that after the post-login redirect, getSession() can restore it.
           cognitoUser.setSignInUserSession(session);
           this.setTokensFromSession(session, email);
-          resolve({ challenge: null, idToken: this.idToken!, accessToken: this.accessToken! });
+          resolve({ challenge: null, ...this.currentTokens() });
         },
-        onFailure: (err) => {
-          reject(this.options.errorMapper(err));
-        },
+        onFailure: this.onFailureHandler(reject),
         newPasswordRequired: (userAttributes, requiredAttributes) => {
           // The user is authenticated but Cognito requires a new permanent password
           // (e.g. admin-created/invited users in FORCE_CHANGE_PASSWORD state). Surface
@@ -246,7 +295,7 @@ export class CognitoClient {
           // challenge can be completed without re-authenticating.
           this.pendingChallengeUser = cognitoUser;
           resolve({
-            challenge: 'NEW_PASSWORD_REQUIRED',
+            challenge: NEW_PASSWORD_REQUIRED,
             userAttributes,
             requiredAttributes,
           });
@@ -271,7 +320,7 @@ export class CognitoClient {
     userAttributes: Record<string, unknown> = {},
   ): Promise<SessionTokens> {
     if (!this.pendingChallengeUser) {
-      throw new Error('No pending password challenge. Please sign in again.');
+      throw new Error(NO_PENDING_CHALLENGE_MESSAGE);
     }
     const user = this.pendingChallengeUser;
     // Cognito rejects resending the `sub` attribute (it's read-only / server-managed).
@@ -296,16 +345,22 @@ export class CognitoClient {
           user.setSignInUserSession(session);
           this.setTokensFromSession(session, user.getUsername());
           this.pendingChallengeUser = null;
-          resolve({ idToken: this.idToken!, accessToken: this.accessToken! });
+          resolve(this.currentTokens());
         },
         onFailure: (err) => {
           this.pendingChallengeUser = null;
-          reject(this.options.errorMapper(err));
+          this.rejectWithMappedError(reject, err);
         },
       });
     });
   }
 
+  /**
+   * Restore a cached session from the injected Storage.
+   *
+   * Returns the restored session and tokens, or `null` when there is no cached
+   * user or the cached session is invalid. Terminal failure clears stale tokens.
+   */
   getSession(): Promise<RestoredSession | null> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
@@ -323,7 +378,7 @@ export class CognitoClient {
             return;
           }
           this.setTokensFromSession(session, cognitoUser.getUsername());
-          resolve({ idToken: this.idToken!, accessToken: this.accessToken!, user: this.currentUser! });
+          resolve({ ...this.currentTokens(), user: this.currentUser! });
         });
       } catch {
         // SDK threw synchronously (e.g. no cached refresh token). Treat as unauthenticated.
@@ -356,10 +411,16 @@ export class CognitoClient {
     }
   }
 
+  /**
+   * Refresh the current session using the cached refresh token.
+   *
+   * Returns fresh tokens, or rejects when there is no cached user or the cached
+   * session cannot be refreshed.
+   */
   refreshSession(): Promise<SessionTokens> {
     this.initPool();
     const cognitoUser = this.pool!.getCurrentUser();
-    if (!cognitoUser) return Promise.reject(new Error('No cached session to refresh'));
+    if (!cognitoUser) return Promise.reject(new Error(NO_CACHED_SESSION_MESSAGE));
 
     // Load the cached session first. If the id token is still valid, getSession
     // returns it. If it is expired, getSession uses the cached refresh token to
@@ -373,37 +434,50 @@ export class CognitoClient {
           // cached session must not leave token state behind.
           cognitoUser.signOut();
           this.clearTokens();
-          return reject(err ? this.options.errorMapper(err) : new Error('No valid cached session'));
+          return err
+            ? this.rejectWithMappedError(reject, err)
+            : reject(new Error(NO_VALID_CACHED_SESSION_MESSAGE));
         }
         this.setTokensFromSession(session, cognitoUser.getUsername());
-        resolve({ idToken: this.idToken!, accessToken: this.accessToken! });
+        resolve(this.currentTokens());
       });
     });
   }
 
+  /**
+   * Initiate the forgot-password flow.
+   *
+   * Resolves when the verification code has been sent, which the SDK signals
+   * through either `onSuccess` or `inputVerificationCode`.
+   */
   forgotPassword(email: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.forgotPassword({
         onSuccess: () => resolve(),
-        onFailure: (err) => reject(this.options.errorMapper(err)),
+        onFailure: this.onFailureHandler(reject),
         inputVerificationCode: () => resolve(),
       });
     });
   }
 
+  /**
+   * Complete the forgot-password flow by submitting the verification code and a
+   * new password.
+   */
   confirmNewPassword(email: string, code: string, newPassword: string): Promise<void> {
     this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.confirmPassword(code, newPassword, {
         onSuccess: () => resolve(),
-        onFailure: (err) => reject(this.options.errorMapper(err)),
+        onFailure: this.onFailureHandler(reject),
       });
     });
   }
 
+  /** Sign the current user out of the SDK and clear all in-memory tokens. */
   signOut(): void {
     if (this.pool) {
       const cognitoUser = this.pool.getCurrentUser();
@@ -419,14 +493,17 @@ export class CognitoClient {
     this.pendingChallengeUser = null;
   }
 
+  /** Return the current user's username, or `null` when not signed in. */
   getUser(): string | null {
     return this.currentUser || null;
   }
 
+  /** Return the current ID token, or `null` when not signed in. */
   getIdToken(): string | null {
     return this.idToken || null;
   }
 
+  /** Return the current access token, or `null` when not signed in. */
   getAccessToken(): string | null {
     return this.accessToken || null;
   }
@@ -445,6 +522,25 @@ export class CognitoClient {
     this.options.navigate(target);
   }
 
+  /**
+   * Build an SDK `onFailure` callback that maps the error and rejects the owning
+   * promise. This keeps callback-based methods from duplicating the same arrow.
+   */
+  private onFailureHandler(reject: (reason?: unknown) => void): (err: unknown) => void {
+    return (err) => this.rejectWithMappedError(reject, err);
+  }
+
+  /** Map an SDK error through the injected errorMapper and reject the promise. */
+  private rejectWithMappedError(reject: (reason?: unknown) => void, err: unknown): void {
+    reject(this.options.errorMapper(err));
+  }
+
+  /** Return the tokens currently held in memory as a `SessionTokens` object. */
+  private currentTokens(): SessionTokens {
+    return { idToken: this.idToken!, accessToken: this.accessToken! };
+  }
+
+  /** Populate in-memory token state from a valid SDK session. */
   private setTokensFromSession(session: CognitoSessionLike, username: string): void {
     this.idToken = session.getIdToken().getJwtToken();
     this.accessToken = session.getAccessToken().getJwtToken();
