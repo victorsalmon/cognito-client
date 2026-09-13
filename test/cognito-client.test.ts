@@ -172,11 +172,15 @@ describe('CognitoClient — dependency injection', () => {
     }
   });
 
-  it('omits Storage when the storage hook returns undefined', () => {
-    const { sdk, captured } = installMockSdk({});
+  it('fails closed when the storage hook returns undefined in a browser env', () => {
+    // jsdom exposes localStorage, so a missing storage hook would make the
+    // Cognito SDK silently persist the refresh token there — the guard turns
+    // that silent fallback into an explicit error.
+    const { sdk } = installMockSdk({});
     const client = makeClient({ sdk, storage: () => undefined });
-    client.signUp('test@example.com', 'Pass123!');
-    expect(captured.pools[0]).not.toHaveProperty('Storage');
+    expect(() => client.signUp('test@example.com', 'Pass123!')).toThrow(
+      /no Storage supplied.*localStorage/,
+    );
   });
 
   it('routes SDK errors through the injected errorMapper', async () => {

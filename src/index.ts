@@ -153,6 +153,21 @@ function resolveSupplier<T>(value: T | (() => T)): T {
   return typeof value === 'function' ? (value as () => T)() : value;
 }
 
+/**
+ * Fail-closed storage guard: refresh tokens must live in `sessionStorage`
+ * only. `localStorage` persists across sessions and would widen the blast
+ * radius of a stolen refresh token, so an adapter that passes it is rejected.
+ */
+export function assertSessionStorageOnly(storage: Storage | undefined): void {
+  if (!storage) return;
+  const maybeLocal = (globalThis as { localStorage?: Storage }).localStorage;
+  if (maybeLocal && storage === maybeLocal) {
+    throw new Error(
+      'cognito-client: refresh tokens must use sessionStorage; localStorage is forbidden.',
+    );
+  }
+}
+
 /** Clock skew (seconds) tolerated when judging a JWT expired. */
 const TOKEN_EXPIRY_SKEW_SEC = 60;
 
@@ -195,12 +210,27 @@ export class CognitoClient {
   }
 
   /**
-   * Build the Storage option to spread into SDK constructors.
-   * Returns an empty object when no storage is configured so the spread is a
-   * no-op and the SDK falls back to its default storage behavior.
+   * Build the Storage option to spread into SDK constructors, FAIL-CLOSED.
+   * When no storage is supplied in a browser environment, the Cognito SDK
+   * silently defaults to `localStorage` for refresh-token persistence —
+   * exactly what the sessionStorage-only invariant forbids. So: when
+   * `localStorage` exists (i.e. the SDK would actually persist there), a
+   * missing storage option is an error, not a default. In non-browser
+   * runtimes (no `localStorage` global) omission is allowed because the SDK
+   * has nothing to persist to.
    */
   private buildStorageOption(): { Storage: Storage } | {} {
-    return this.storage ? { Storage: this.storage } : {};
+    const storage = this.storage;
+    assertSessionStorageOnly(storage);
+    if (!storage) {
+      const maybeLocal = (globalThis as { localStorage?: Storage }).localStorage;
+      if (maybeLocal) {
+        throw new Error(
+          'cognito-client: no Storage supplied — the Cognito SDK would persist refresh tokens to localStorage. Pass `storage: () => sessionStorage`.',
+        );
+      }
+    }
+    return storage ? { Storage: storage } : {};
   }
 
   private initPool(): void {

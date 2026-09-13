@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-09-12
+
+### Fixed
+
+- Fail-closed storage guard: `assertSessionStorageOnly()` now rejects an
+  explicit `localStorage` adapter, and SDK construction throws when no
+  `storage` is supplied while `localStorage` exists. Previously the Cognito
+  SDK silently fell back to `localStorage` for refresh-token persistence —
+  exactly what the sessionStorage-only invariant forbids. Non-browser
+  runtimes (no `localStorage` global) may still omit `storage`.
+
 ## [1.1.2] - 2026-09-12
 
 ### Added

@@ -256,7 +256,7 @@ describe('CognitoClient — property tests', () => {
           userPoolId: () => currentPool,
           clientId: () => currentClient,
           sdk,
-          storage: () => undefined,
+          storage: () => sessionStorageMock,
           errorMapper: (err) => new Error(String(err)),
           navigate: vi.fn(),
         });
@@ -267,9 +267,8 @@ describe('CognitoClient — property tests', () => {
     );
   });
 
-  it('Storage injection: passes the injected Storage to every pool/user, or omits it when undefined', async () => {
+  it('Storage injection: passes the injected Storage to every pool/user', async () => {
     const storageArb = fc.oneof(
-      fc.constant(undefined),
       fc.constant({} as Storage),
       fc.constant(sessionStorageMock),
     );
@@ -280,14 +279,24 @@ describe('CognitoClient — property tests', () => {
         await client.signIn('u@example.com', 'Pass123!');
         await client.forgotPassword('u@example.com');
         for (const pool of captured.pools) {
-          if (storage) expect(pool.Storage).toBe(storage);
-          else expect(pool).not.toHaveProperty('Storage');
+          expect(pool.Storage).toBe(storage);
         }
         for (const user of captured.users) {
-          if (storage) expect(user.Storage).toBe(storage);
-          else expect(user).not.toHaveProperty('Storage');
+          expect(user.Storage).toBe(storage);
         }
       }),
+    );
+  });
+
+  it('Storage injection: an undefined storage hook fails closed in a browser env', async () => {
+    // jsdom exposes localStorage — omitting storage would silently persist
+    // the refresh token there, so the guard throws instead of defaulting.
+    const { sdk } = makeMockSdk({});
+    const client = makeClient({ sdk, storage: () => undefined });
+    // initPool() runs synchronously inside signIn, so the guard throws
+    // synchronously rather than producing a rejected promise.
+    expect(() => client.signIn('u@example.com', 'Pass123!')).toThrow(
+      /no Storage supplied.*localStorage/,
     );
   });
 
