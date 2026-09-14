@@ -234,3 +234,18 @@ isTokenExpired(token: string, nowMs?: number): boolean
   two `.` segments), or missing a finite numeric `exp` claim; otherwise
   compares `exp * 1000 <= nowMs + 60_000` (`nowMs` defaults to `Date.now()`).
 - Never throws.
+
+## `assertSessionStorageOnly(storage)`
+
+```typescript
+assertSessionStorageOnly(storage: Storage | undefined): void
+```
+
+- Fail-closed storage guard: rejects the global `localStorage` because refresh
+  tokens must persist in `sessionStorage` only — `localStorage` survives tab
+  close and widens the blast radius of a stolen refresh token.
+- Returns `void` for `undefined` (non-browser runtimes may omit storage) and
+  for any adapter that is not the global `localStorage`.
+- Throws: `Error('cognito-client: refresh tokens must use sessionStorage; localStorage is forbidden.')`
+  when `storage === globalThis.localStorage`. `CognitoClient` calls this during
+  pool/SDK construction, so a `localStorage` adapter throws at first auth use.

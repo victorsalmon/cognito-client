@@ -50,18 +50,15 @@ examples — never in `src/`.
 Never commit secrets: no AWS credentials, access keys (`AKIA...`), private
 keys, tokens, real pool IDs, `.env` files, or generated `dist/` output.
 Use placeholder values (e.g. `us-east-1_XXXXXXXXX`, `your-app-client-id`) in
-examples and docs. CI runs a fail-closed secret scan — re-run it locally when
-in doubt:
-
-```bash
-grep -rE -n --exclude-dir=.git --exclude-dir=node_modules -e 'AKIA[0-9A-Z]{16}' -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -- .
-```
+examples and docs. CI runs a fail-closed secret scan — the canonical pattern
+list lives in the `Secret scan` step of the `verify` job in
+`.github/workflows/ci.yml`; re-run it locally when in doubt.
 
 ## Release checklist
 
 1. Bump `version` in `package.json` per [Semantic Versioning](https://semver.org/).
-2. Update `CHANGELOG.md` under `[Unreleased]` → move entries to a new
-   versioned section (`## [x.y.z] - YYYY-MM-DD`, Keep a Changelog format).
+2. Update `CHANGELOG.md` with a new versioned section
+   (`## [x.y.z] - YYYY-MM-DD`, Keep a Changelog format) for the release.
 3. Verify the build: `pnpm run build` exits 0 and `dist/` contains the fresh
    output (do not commit `dist/` — it ships via the `files` field).
 4. Dry-run publish: `pnpm publish --dry-run` and confirm only `dist`,

@@ -1,8 +1,8 @@
 # cognito-client
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-41%20passing-brightgreen.svg)](#testing)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7.x-blue.svg)](https://www.typescriptlang.org/)
+[![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg)](#testing)
 
 A generic, dependency-injected browser client for [AWS Cognito](https://aws.amazon.com/cognito/)
 user pools — sign-up, confirmation, sign-in, session restore/refresh, sign-out, forgot/reset
@@ -625,15 +625,19 @@ if (result.challenge === null) {
 ## Testing
 
 The suite uses [Vitest](https://vitest.dev/) with a `jsdom` environment and a mock SDK.
-41 tests across 5 describe blocks:
+59 tests across 9 describe blocks:
 
 | Describe block | Tests | Coverage |
 |---|---|---|
 | `CognitoClient - dependency injection` | 5 | Lazy pool config, lazy storage, SDK injection, error mapper |
-| `CognitoClient - signIn / session` | 9 | signIn success, NEW_PASSWORD_REQUIRED challenge, completeNewPassword, getSession, refreshSession, forgotPassword, confirmNewPassword |
+| `CognitoClient - signIn / session` | 10 | signIn success, NEW_PASSWORD_REQUIRED challenge, completeNewPassword, getSession, refreshSession, forgotPassword, confirmNewPassword |
 | `CognitoClient - sign-out / navigation` | 3 | signOut, redirectToLogin with ?returnTo=, stale session cleanup |
+| `CognitoClient - ensureSession page-load gate` | 4 | Live session, dead-session redirect, refresh path, never-throws contract |
 | `CognitoClient - product neutrality` | 2 | No product roles/routes on the prototype, no product terms in source |
-| `CognitoClient - property tests` | 22 | Invariants over generated inputs (tokens, scrubbing, lazy config, redirect, sign-up, errors) |
+| `CognitoClient - property tests` | 23 | Invariants over generated inputs (tokens, scrubbing, lazy config, redirect, sign-up, errors) |
+| `isTokenExpired - fail-closed JWT expiry probe` | 2 | Expiry/skew boundaries, malformed tokens and missing exp |
+| `CognitoClient - final mutation-killing tests` | 7 | Edge paths where Stryker mutants previously survived |
+| `cognito-client storage guard` | 3 | sessionStorage accepted, localStorage rejected, initPool fails closed |
 
 ```bash
 npm test             # vitest run (jsdom, mock SDK — no real Cognito calls)
@@ -669,7 +673,8 @@ is rebuilt automatically after `pnpm install`.
 - Dependency audit (blocking): `corepack pnpm audit --audit-level=critical`
 - Dependency audit (advisory, non-blocking): `corepack pnpm audit --audit-level=high`
   (`continue-on-error: true` in CI — re-run locally to triage new advisories)
-- Secret scan (fail-closed): `grep -rE -n --exclude-dir=.git --exclude-dir=node_modules -e 'AKIA[0-9A-Z]{16}' -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -- .`
+- Secret scan (fail-closed): run the `Secret scan` step of the `verify` job in
+  `.github/workflows/ci.yml` (canonical pattern list)
 
 ### Requirements
 
@@ -684,12 +689,14 @@ is rebuilt automatically after `pnpm install`.
 ```text
 cognito-client/
 ├── src/
-│   └── index.ts      # CognitoClient + all types (single file, 453 lines)
+│   └── index.ts      # CognitoClient + all types (single file, 579 lines)
 ├── test/
-│   ├── cognito-client.test.ts          # 19 unit tests
-│   └── cognito-client.property.test.ts # 22 property tests
+│   ├── cognito-client.test.ts          # 33 unit tests
+│   ├── cognito-client.property.test.ts # 23 property tests
+│   └── storage-guard.test.ts           # 3 storage-guard tests
 ├── examples/
-│   └── quickstart.ts # offline consumer wiring (injected SDK stub, allowlisted returnTo)
+│   ├── quickstart.ts # offline consumer wiring (injected SDK stub, allowlisted returnTo)
+│   └── session-lifecycle.ts # offline full session lifecycle (sign-in → refresh → sign-out)
 ├── docs/
 │   ├── api.md          # method-level API companion
 │   └── plan-evidence.md # canonical returnTo validation rules

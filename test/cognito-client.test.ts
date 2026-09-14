@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CognitoClient, type CognitoSdk } from '../src/index';
 
 // ─── Minimal in-memory SDK mock ──────────────────────────────────────────────
-// Unlike the façade tests (cognito.test.ts) which stub the global
+// Unlike the façade tests, which stub the global
 // AmazonCognitoIdentity, these tests inject the mock SDK directly through the
 // constructor. This is the whole point of the generic core: every dependency
 // (SDK, storage, error mapper, navigation) arrives through the options.
@@ -396,7 +396,8 @@ describe('isTokenExpired — fail-closed JWT expiry probe', () => {
   });
 });
 
-describe('CognitoClient — product neutrality', () => {  it('exposes no product role derivation or route policy', () => {
+describe('CognitoClient — product neutrality', () => {
+  it('exposes no product role derivation or route policy', () => {
     const { sdk } = installMockSdk({});
     const client = makeClient({ sdk });
     const proto = Object.getPrototypeOf(client) as Record<string, unknown>;
@@ -414,7 +415,7 @@ describe('CognitoClient — product neutrality', () => {  it('exposes no product
   });
 });
 
-describe('CognitoClient – final mutation-killing tests', () => {
+describe('CognitoClient — final mutation-killing tests', () => {
   it('confirmSignUp rejects when the SDK returns an error', async () => {
     const { sdk } = installMockSdk({
       // Override the default success callback with an error.
