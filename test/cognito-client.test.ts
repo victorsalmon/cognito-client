@@ -2,10 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CognitoClient, type CognitoSdk } from '../src/index';
 
 // ─── Minimal in-memory SDK mock ──────────────────────────────────────────────
-// Unlike the façade tests, which stub the global
-// AmazonCognitoIdentity, these tests inject the mock SDK directly through the
-// constructor. This is the whole point of the generic core: every dependency
-// (SDK, storage, error mapper, navigation) arrives through the options.
+// These tests inject the mock SDK directly through the constructor. This is the
+// whole point of the generic core: every dependency (SDK, storage, error
+// mapper, navigation) arrives through the options.
 
 interface ConstructedUserArgs {
   Username: string;
@@ -133,7 +132,7 @@ describe('CognitoClient — dependency injection', () => {
   it('constructs the pool with the supplied pool config and sessionStorage', () => {
     const { sdk, captured } = installMockSdk({});
     const client = makeClient({ sdk });
-    client.signUp('test@example.com', 'Pass123!');
+    void client.signUp('test@example.com', 'Pass123!');
     expect(captured.pools).toHaveLength(1);
     expect(captured.pools[0].UserPoolId).toBe('ca-central-1_TEST');
     expect(captured.pools[0].ClientId).toBe('test-client');
@@ -415,7 +414,7 @@ describe('CognitoClient — product neutrality', () => {
   });
 });
 
-describe('CognitoClient — final mutation-killing tests', () => {
+describe('CognitoClient — SDK error and edge-case behavior', () => {
   it('confirmSignUp rejects when the SDK returns an error', async () => {
     const { sdk } = installMockSdk({
       // Override the default success callback with an error.
@@ -481,7 +480,7 @@ describe('CognitoClient — final mutation-killing tests', () => {
   it('signOut does not throw when there is no current user', () => {
     const { sdk } = installMockSdk({ noCurrentUser: true });
     const client = makeClient({ sdk });
-    client.signIn('test@example.com', 'Pass123!');
+    void client.signIn('test@example.com', 'Pass123!');
     client.signOut();
     expect(client.getIdToken()).toBeNull();
   });
@@ -493,7 +492,7 @@ describe('CognitoClient — final mutation-killing tests', () => {
       },
     });
     const client = makeClient({ sdk });
-    client.signIn('test@example.com', 'Pass123!');
+    void client.signIn('test@example.com', 'Pass123!');
     const session = await client.getSession();
     expect(session).toBeNull();
     expect(client.getIdToken()).toBeNull();
