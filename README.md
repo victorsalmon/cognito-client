@@ -43,6 +43,7 @@ routes, no default targets — every dependency is injected.**
 - [The NEW_PASSWORD_REQUIRED challenge](#the-new_password_required-challenge)
 - [Session persistence and the post-login redirect](#session-persistence-and-the-post-login-redirect)
 - [Security model](#security-model)
+- [Consumer data-handling](#consumer-data-handling)
 - [Testing](#testing)
 - [Development](#development)
 - [Project layout](#project-layout)
@@ -90,7 +91,7 @@ Every product concern is injected:
   lives in the injected `Storage` (use `sessionStorage` so it clears on tab close)
 - **Product-neutrality tested** — a test asserts the core source contains no product
   roles, routes, or copy
-- **Zero runtime dependencies** — only dev dependencies (TypeScript, Vitest, jsdom)
+- **Zero runtime dependencies** — only dev dependencies (TypeScript, Vitest, fast-check, jsdom, Stryker)
 
 ---
 
@@ -228,6 +229,9 @@ import { CognitoClient } from '@clocklobster/cognito-client';
 
 const cognito = new CognitoClient(options);
 ```
+
+Method-level companion with signatures, returns/throws, and the exported utilities
+(`isTokenExpired()`, `assertSessionStorageOnly()`): [docs/api.md](docs/api.md).
 
 ---
 
@@ -636,7 +640,7 @@ The suite uses [Vitest](https://vitest.dev/) with a `jsdom` environment and a mo
 | `CognitoClient - product neutrality` | 2 | No product roles/routes on the prototype, no product terms in source |
 | `CognitoClient - property tests` | 23 | Invariants over generated inputs (tokens, scrubbing, lazy config, redirect, sign-up, errors) |
 | `isTokenExpired - fail-closed JWT expiry probe` | 2 | Expiry/skew boundaries, malformed tokens and missing exp |
-| `CognitoClient - final mutation-killing tests` | 7 | Edge paths where Stryker mutants previously survived |
+| `CognitoClient - SDK error and edge-case behavior` | 7 | Edge paths where mutants previously survived |
 | `cognito-client storage guard` | 3 | sessionStorage accepted, localStorage rejected, initPool fails closed |
 
 ```bash
@@ -738,7 +742,10 @@ size and opinionated defaults.
 
 ## Contributing
 
-Pull requests are welcome.
+Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, quality
+gates, and the release checklist. This project follows the
+[Code of Conduct](CODE_OF_CONDUCT.md); report security issues per
+[SECURITY.md](SECURITY.md).
 
 ### Guidelines
 
