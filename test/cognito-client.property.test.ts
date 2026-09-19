@@ -488,4 +488,82 @@ describe('CognitoClient — property tests', () => {
       }),
     );
   });
+
+  it('failed signIn leaves no authenticated state for any prior state', async () => {
+    const errArb = fc.oneof(
+      fc.string({ maxLength: 12 }),
+      fc.integer(),
+      fc.record({ code: fc.string({ maxLength: 8 }) }),
+    );
+    await fc.assert(
+      fc.asyncProperty(
+        fc.boolean(),
+        fc.boolean(),
+        emailArb,
+        emailArb,
+        errArb,
+        async (wasSignedIn, hadChallenge, priorEmail, attemptEmail, err) => {
+          // Controllable mock: success/challenge/failure per attempt via a mode flag.
+          let mode: 'success' | 'challenge' | 'failure' = 'success';
+          let failureErr: unknown = err;
+          const sessionFor = (tag: string) => ({
+            isValid: () => true,
+            getIdToken: () => ({ getJwtToken: () => `${tag}-id` }),
+            getAccessToken: () => ({ getJwtToken: () => `${tag}-access` }),
+            getRefreshToken: () => ({ getToken: () => 'refresh' }),
+          });
+          const poolInstances: any[] = [];
+          const CognitoUserPool = vi.fn(function (this: any, data: any) {
+            this.getCurrentUser = vi.fn(() => null);
+            poolInstances.push(this);
+          });
+          const CognitoUser = vi.fn(function (this: any, data: any) {
+            this.getUsername = () => data.Username;
+            this.setSignInUserSession = vi.fn();
+            this.signOut = vi.fn();
+            this.authenticateUser = vi.fn((_d: unknown, cb: any) => {
+              if (mode === 'failure') return cb.onFailure(failureErr);
+              if (mode === 'challenge')
+                return cb.newPasswordRequired({ sub: 's', email: data.Username }, {});
+              cb.onSuccess(sessionFor(data.Username));
+            });
+            this.getSession = vi.fn((cb: any) => cb(null, sessionFor(data.Username)));
+            this.completeNewPasswordChallenge = vi.fn((_p: string, _a: unknown, cb: any) =>
+              cb.onSuccess(sessionFor(data.Username)),
+            );
+          });
+          const AuthenticationDetails = vi.fn(function (this: any, data: any) {
+            this.data = data;
+          });
+          const sdk = { CognitoUserPool, CognitoUser, AuthenticationDetails } as unknown as CognitoSdk;
+          const mapped = new Error('MAPPED');
+          const mapper = vi.fn(() => mapped);
+          const client = makeClient({ sdk, errorMapper: mapper });
+
+          // Establish any prior authenticated state: tokens and/or a pending challenge.
+          if (hadChallenge) {
+            mode = 'challenge';
+            await client.signIn(priorEmail, 'TempPass123!');
+          } else if (wasSignedIn) {
+            mode = 'success';
+            await client.signIn(priorEmail, 'Pass123!');
+            expect(client.getUser()).toBe(priorEmail);
+          }
+
+          // The failing attempt must reject with the mapped error and leave
+          // no authenticated state behind, regardless of the prior state.
+          mode = 'failure';
+          failureErr = err;
+          await expect(client.signIn(attemptEmail, 'wrong')).rejects.toBe(mapped);
+          expect(mapper).toHaveBeenCalledWith(err);
+          expect(client.getUser()).toBeNull();
+          expect(client.getIdToken()).toBeNull();
+          expect(client.getAccessToken()).toBeNull();
+          await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(
+            /No pending password challenge/,
+          );
+        },
+      ),
+    );
+  });
 });
