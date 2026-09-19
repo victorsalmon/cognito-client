@@ -22,10 +22,14 @@ pnpm run typecheck     # tsc --noEmit (covers src + test + examples)
 pnpm run build         # tsc -p tsconfig.build.json (emits dist/ + declarations)
 ```
 
-`postinstall` rebuilds `dist/` automatically after install, so a fresh install
-also verifies the build compiles. Both typecheck and test must exit 0 before
-opening a PR. No network access is required — the suite uses Vitest with a
-`jsdom` environment and a mock SDK (no real Cognito calls).
+`prepare` rebuilds `dist/` automatically after a local install, so a fresh
+install also verifies the build compiles. The build must never move back to an
+install-lifecycle hook (`preinstall`/`install`/`postinstall`): those run on
+consumer machines during `npm install`, where this package's devDependencies
+and `tsconfig.build.json` are absent, and would fail the install. Both
+typecheck and test must exit 0 before opening a PR. No network access is
+required — the suite uses Vitest with a `jsdom` environment and a mock SDK (no
+real Cognito calls).
 
 ## Pull requests
 

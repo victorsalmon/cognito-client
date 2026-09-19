@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dev-toolchain currency: `fast-check` 4.10.2 and `jsdom` 30.1.0 (latest
+  stable). No runtime or public API change. `fast-check@4.10.2` is listed in
+  `pnpm-workspace.yaml` `minimumReleaseAgeExclude` because it was published
+  inside the fleet's supply-chain freshness window.
+
+### Security
+
+- Pinned the transitive dev-only `fast-uri` (3.1.6) and `qs` (6.16.0) via
+  `pnpm-workspace.yaml` overrides, clearing four high and three moderate
+  advisories inherited through `@stryker-mutator` → `ajv` / `typed-rest-client`.
+  The published runtime tree has zero dependencies and was never affected.
+
+### Fixed
+
+- Packaging: the build moved from `postinstall` to `prepare`. `postinstall`
+  runs on every consumer install, where this package's devDependencies
+  (TypeScript) and `tsconfig.build.json` are absent, so
+  `npm install @clocklobster/cognito-client` failed with
+  `'tsc' is not recognized`. `prepare` still builds `dist/` on a local
+  install and before pack/publish, and never runs for registry consumers.
+- A `package-metadata` regression test now fails if any
+  `preinstall`/`install`/`postinstall` hook returns to `package.json`.
+
 ## [1.1.3] - 2026-09-12
 
 ### Fixed
