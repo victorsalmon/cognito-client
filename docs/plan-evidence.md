@@ -67,11 +67,15 @@ same-origin paths pass through.
 
 - `dependency-audit (blocking)` — `corepack pnpm audit --audit-level=critical`
   (fails CI on critical advisories).
-- `dependency-audit (advisory)` — `corepack pnpm audit --audit-level=high`
-  with `continue-on-error: true`, so known high-severity advisories in the
-  dev-only chain (e.g. `fast-uri` via `@stryker-mutator`/`ajv`,
-  GHSA-jqff-g426-hqxp) stay visible without going red on day one. Promotion
-  to blocking at `high` is a follow-up once the dev chain is remediated.
+- `dependency-audit (advisory)` — `corepack pnpm audit --audit-level=high`,
+  now blocking (no `continue-on-error`): the dev-chain advisories are
+  remediated via `pnpm-workspace.yaml` overrides pinning `fast-uri` to 3.1.6
+  and `qs` to 6.16.0, so `pnpm audit` (and `--audit-level=high`) report no
+  known vulnerabilities. Previously advisory with `continue-on-error: true`
+  while 4 high + 3 moderate advisories (e.g. `fast-uri` via
+  `@stryker-mutator`/`ajv`, GHSA-jqff-g426-hqxp) were open; promotion to
+  blocking landed together with the override remediation (2026-09-19
+  toolchain change: vitest 5.x + GHA v7).
 - `secret-scan` — fail-closed `grep -rE` over tracked files for AWS keys,
   private-key blocks, and `xox`/`ghp_`/`sk-` token prefixes; exits non-zero
   on any match.

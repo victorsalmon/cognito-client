@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
 
@@ -37,7 +37,6 @@ jobs:
         run: corepack pnpm audit --audit-level=critical
 
       - name: Dependency audit (advisory)
-        continue-on-error: true
         run: corepack pnpm audit --audit-level=high
 
       - name: Secret scan
@@ -69,7 +68,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
