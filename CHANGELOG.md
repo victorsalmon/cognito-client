@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Pinned the transitive dev-only `fast-uri` (3.1.6) and `qs` (6.16.0) via
+  `pnpm-workspace.yaml` overrides, clearing four high and three moderate
+  advisories inherited through `@stryker-mutator` → `ajv` / `typed-rest-client`.
+  The published runtime tree has zero dependencies and was never affected.
+
 ### Fixed
 
 - Packaging: the build moved from `postinstall` to `prepare`. `postinstall`
