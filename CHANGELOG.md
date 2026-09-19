@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dev-toolchain currency: `fast-check` 4.10.2 and `jsdom` 30.1.0 (latest
+  stable). No runtime or public API change. `fast-check@4.10.2` is listed in
+  `pnpm-workspace.yaml` `minimumReleaseAgeExclude` because it was published
+  inside the fleet's supply-chain freshness window.
+
 ### Security
 
 - Pinned the transitive dev-only `fast-uri` (3.1.6) and `qs` (6.16.0) via
