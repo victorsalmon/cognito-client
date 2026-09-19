@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen.svg)](#testing)
 
 A generic, dependency-injected browser client for [AWS Cognito](https://aws.amazon.com/cognito/)
 user pools — sign-up, confirmation, sign-in, session restore/refresh, sign-out, forgot/reset
@@ -629,7 +629,7 @@ if (result.challenge === null) {
 ## Testing
 
 The suite uses [Vitest](https://vitest.dev/) with a `jsdom` environment and a mock SDK.
-59 tests across 9 describe blocks:
+62 tests across 10 describe blocks:
 
 | Describe block | Tests | Coverage |
 |---|---|---|
@@ -642,9 +642,10 @@ The suite uses [Vitest](https://vitest.dev/) with a `jsdom` environment and a mo
 | `isTokenExpired - fail-closed JWT expiry probe` | 2 | Expiry/skew boundaries, malformed tokens and missing exp |
 | `CognitoClient - SDK error and edge-case behavior` | 7 | Edge paths where mutants previously survived |
 | `cognito-client storage guard` | 3 | sessionStorage accepted, localStorage rejected, initPool fails closed |
+| `package metadata — consumer installability` | 3 | No install-time lifecycle hook (registry installs stay script-free), `prepare` wires the local build, packed files self-contained |
 
 ```bash
-npm test             # vitest run (jsdom, mock SDK — no real Cognito calls)
+pnpm test            # vitest run (jsdom, mock SDK — no real Cognito calls)
 ```
 
 The **product-neutrality test** asserts that the `CognitoClient` source contains no
@@ -669,8 +670,12 @@ pnpm test             # vitest run
 pnpm run build        # tsc -p tsconfig.build.json
 ```
 
-`postinstall` runs `tsc -p tsconfig.build.json` on every install, so `dist/`
-is rebuilt automatically after `pnpm install`.
+`prepare` runs `tsc -p tsconfig.build.json` on a local install (and before
+pack/publish), so `dist/` is rebuilt automatically after `pnpm install`.
+It is deliberately *not* an install-lifecycle hook: `preinstall`/`install`/
+`postinstall` scripts run on every consumer install, where this package's
+devDependencies and `tsconfig.build.json` are absent — an install hook there
+would break `npm install`.
 
 ### CI re-run notes
 
@@ -697,7 +702,9 @@ cognito-client/
 ├── test/
 │   ├── cognito-client.test.ts          # 33 unit tests
 │   ├── cognito-client.property.test.ts # 23 property tests
-│   └── storage-guard.test.ts           # 3 storage-guard tests
+│   ├── storage-guard.test.ts           # 3 storage-guard tests
+│   ├── package-metadata.test.ts        # 3 packaging-guard tests
+│   └── vite-raw.d.ts                   # `?raw` import typing for the metadata test
 ├── examples/
 │   ├── quickstart.ts # offline consumer wiring (injected SDK stub, allowlisted returnTo)
 │   └── session-lifecycle.ts # offline full session lifecycle (sign-in → refresh → sign-out)
