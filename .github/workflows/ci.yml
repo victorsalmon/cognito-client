@@ -33,6 +33,20 @@ jobs:
       - name: Test
         run: corepack pnpm test
 
+      - name: Consumer-install smoke (pack + offline install + import)
+        run: |
+          set -euo pipefail
+          corepack pnpm run build
+          TARBALL="$(npm pack --silent | tail -n 1)"
+          echo "Packed tarball: $TARBALL"
+          SMOKE_DIR="$(mktemp -d)"
+          echo "Smoke dir: $SMOKE_DIR"
+          cp "$TARBALL" "$SMOKE_DIR/"
+          cd "$SMOKE_DIR"
+          npm init -y --silent
+          npm install "./$(basename "$TARBALL")" --no-audit --no-fund --silent
+          node --input-type=module -e "import('./node_modules/@clocklobster/cognito-client/dist/index.js').then(m => { if (!m.CognitoClient) { console.error('CognitoClient export missing'); process.exit(1); } console.log('Consumer-install smoke passed: CognitoClient import OK'); })"
+
       - name: Dependency audit (blocking)
         run: corepack pnpm audit --audit-level=critical
 
