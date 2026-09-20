@@ -84,6 +84,13 @@ type SignInResult =
 - On `newPasswordRequired`: holds the `CognitoUser` as the pending challenge
   user (no re-authentication needed) and resolves
   `{ challenge: 'NEW_PASSWORD_REQUIRED', userAttributes, requiredAttributes }`.
+- Fail-closed across attempts: starting a `signIn()` clears any prior
+  in-flight `NEW_PASSWORD_REQUIRED` challenge and prior in-memory tokens
+  (`idToken`, `accessToken`, `currentUser`) before authenticating; `onFailure`
+  clears the pending challenge and in-memory tokens before rejecting, so
+  `getUser()` / `getIdToken()` / `getAccessToken()` return `null` and a later
+  `completeNewPassword()` throws the no-pending-challenge error. `onSuccess`
+  leaves no pending challenge behind.
 - Throws: mapped `errorMapper(err)` on `onFailure`. Does not throw for the
   challenge path.
 
@@ -120,7 +127,9 @@ where `RestoredSession` is `{ idToken: string; accessToken: string; user: string
   `{ idToken, accessToken, user }`.
 - On stale/invalid session (`err`, `null` session, or `!session.isValid()`):
   calls `cognitoUser.signOut()`, clears in-memory tokens, resolves `null`.
-- On synchronous SDK throw (e.g. no cached refresh token): clears in-memory
+- On synchronous SDK throw (e.g. no cached refresh token): calls
+  `cognitoUser.signOut()` (parity with the invalid-session branch, so
+  SDK-persisted stale state is removed) plus clears in-memory
   tokens, resolves `null`. Never rejects for a missing session.
 
 ## `ensureSession(loginUrl)`
