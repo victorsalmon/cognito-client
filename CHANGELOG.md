@@ -99,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Brief re-baselining of the package version to 0.x, superseded same-day by
   1.1.2 to continue the published npm line. The v0.5.0 tag was removed.
 
+[1.1.3]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.1.3
 [1.1.2]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.1.2
 [1.1.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.1.0
 [1.0.0]: https://github.com/victorsalmon/cognito-client/releases/tag/v1.0.0
