@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.x-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen.svg)](#testing)
 
 A generic, dependency-injected browser client for [AWS Cognito](https://aws.amazon.com/cognito/)
 user pools — sign-up, confirmation, sign-in, session restore/refresh, sign-out, forgot/reset
@@ -629,18 +629,19 @@ if (result.challenge === null) {
 ## Testing
 
 The suite uses [Vitest](https://vitest.dev/) with a `jsdom` environment and a mock SDK.
-62 tests across 10 describe blocks:
+82 tests across 11 describe blocks:
 
 | Describe block | Tests | Coverage |
 |---|---|---|
-| `CognitoClient - dependency injection` | 5 | Lazy pool config, lazy storage, SDK injection, error mapper |
+| `CognitoClient - dependency injection` | 10 | Lazy pool config, lazy storage, SDK injection, error mapper, pool initialization and sharing per entry point, non-browser storage omission |
 | `CognitoClient - signIn / session` | 10 | signIn success, NEW_PASSWORD_REQUIRED challenge, completeNewPassword, getSession, refreshSession, forgotPassword, confirmNewPassword |
 | `CognitoClient - sign-out / navigation` | 3 | signOut, redirectToLogin with ?returnTo=, stale session cleanup |
-| `CognitoClient - ensureSession page-load gate` | 4 | Live session, dead-session redirect, refresh path, never-throws contract |
+| `CognitoClient - ensureSession page-load gate` | 5 | Live session, dead-session redirect, refresh path, never-throws contract (SDK throw and pool-init throw) |
 | `CognitoClient - product neutrality` | 2 | No product roles/routes on the prototype, no product terms in source |
-| `CognitoClient - property tests` | 23 | Invariants over generated inputs (tokens, scrubbing, lazy config, redirect, sign-up, errors) |
-| `isTokenExpired - fail-closed JWT expiry probe` | 2 | Expiry/skew boundaries, malformed tokens and missing exp |
-| `CognitoClient - SDK error and edge-case behavior` | 7 | Edge paths where mutants previously survived |
+| `CognitoClient - fail-closed auth state across signIn attempts` | 6 | Attempt-start reset of tokens and pending challenge, failure cleanup, stale challenge invalidation |
+| `CognitoClient - property tests` | 26 | Invariants over generated inputs (tokens, scrubbing, lazy config, redirect, sign-up, errors) |
+| `isTokenExpired - fail-closed JWT expiry probe` | 6 | Expiry/skew boundaries, malformed and undecodable payloads, two-part tokens, non-finite `exp` |
+| `CognitoClient - SDK error and edge-case behavior` | 8 | Edge paths where mutants previously survived |
 | `cognito-client storage guard` | 3 | sessionStorage accepted, localStorage rejected, initPool fails closed |
 | `package metadata — consumer installability` | 3 | No install-time lifecycle hook (registry installs stay script-free), `prepare` wires the local build, packed files self-contained |
 
