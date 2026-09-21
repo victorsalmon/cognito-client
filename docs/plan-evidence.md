@@ -68,10 +68,19 @@ same-origin paths pass through.
 - `dependency-audit (blocking)` — `corepack pnpm audit --audit-level=critical`
   (fails CI on critical advisories).
 - `dependency-audit (advisory)` — `corepack pnpm audit --audit-level=high`
-  with `continue-on-error: true`, so known high-severity advisories in the
-  dev-only chain (e.g. `fast-uri` via `@stryker-mutator`/`ajv`,
-  GHSA-jqff-g426-hqxp) stay visible without going red on day one. Promotion
-  to blocking at `high` is a follow-up once the dev chain is remediated.
+  with `continue-on-error: true`. Deliberately kept advisory by owner
+  decision (2026-09-19) even though the dev chain is now remediated:
+  `pnpm-workspace.yaml` overrides pin `fast-uri` to 3.1.6 and `qs` to 6.16.0,
+  and both `pnpm audit --audit-level=high` and `--audit-level=critical`
+  report "No known vulnerabilities found" (verified 2026-09-20). Promotion to
+  blocking at `high` (previously recorded as a follow-up) was explicitly
+  declined, so future dev-only advisories (e.g. `fast-uri` via
+  `@stryker-mutator`/`ajv`, GHSA-jqff-g426-hqxp) stay visible without turning
+  a required check red.
+- `consumer-install smoke` — packs the tarball, installs it into a fresh temp
+  project offline (local path only, no publish), and imports `dist/index.js`,
+  so a consumer-breaking install hook or `files` drift fails CI even though it
+  is invisible to source-side typecheck/build/test.
 - `secret-scan` — fail-closed `grep -rE` over tracked files for AWS keys,
   private-key blocks, and `xox`/`ghp_`/`sk-` token prefixes; exits non-zero
   on any match.
