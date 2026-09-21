@@ -302,6 +302,10 @@ export class CognitoClient {
    */
   signIn(email: string, password: string): Promise<SignInResult> {
     this.initPool();
+    // Fail-closed: a new attempt invalidates any prior attempt's in-flight
+    // NEW_PASSWORD_REQUIRED challenge and prior in-memory tokens before
+    // authenticating, so a stale challenge can never complete afterwards.
+    this.clearTokens();
     const authDetails = new this.options.sdk.AuthenticationDetails({
       Username: email,
       Password: password,
@@ -314,9 +318,16 @@ export class CognitoClient {
           // so that after the post-login redirect, getSession() can restore it.
           cognitoUser.setSignInUserSession(session);
           this.setTokensFromSession(session, email);
+          // This attempt carried no challenge: ensure no stale challenge survives.
+          this.pendingChallengeUser = null;
           resolve({ challenge: null, ...this.currentTokens() });
         },
-        onFailure: this.onFailureHandler(reject),
+        onFailure: (err) => {
+          // Fail-closed: a failed attempt must not leave prior tokens or a
+          // prior pending challenge observable.
+          this.clearTokens();
+          this.rejectWithMappedError(reject, err);
+        },
         newPasswordRequired: (userAttributes, requiredAttributes) => {
           // The user is authenticated but Cognito requires a new permanent password
           // (e.g. admin-created/invited users in FORCE_CHANGE_PASSWORD state). Surface
@@ -412,6 +423,8 @@ export class CognitoClient {
         });
       } catch {
         // SDK threw synchronously (e.g. no cached refresh token). Treat as unauthenticated.
+        // Parity with the invalid-session branch: remove SDK-persisted state too.
+        cognitoUser.signOut();
         this.clearTokens();
         resolve(null);
       }

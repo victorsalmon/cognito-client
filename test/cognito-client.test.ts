@@ -497,4 +497,119 @@ describe('CognitoClient — SDK error and edge-case behavior', () => {
     expect(session).toBeNull();
     expect(client.getIdToken()).toBeNull();
   });
+
+  it('getSession signs out the SDK user when getSession throws synchronously', async () => {
+    const { sdk, captured } = installMockSdk({
+      getSession: () => {
+        throw new Error('synchronous throw');
+      },
+    });
+    const client = makeClient({ sdk });
+    await client.signIn('test@example.com', 'Pass123!');
+    const session = await client.getSession();
+    expect(session).toBeNull();
+    expect(captured.signOutCalls).toBeGreaterThanOrEqual(1);
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+    expect(client.getUser()).toBeNull();
+  });
+});
+
+describe('CognitoClient — fail-closed auth state across signIn attempts', () => {
+  function makeSequencedSdk(authSequence: Array<(callbacks: any) => void>) {
+    const completedUsers: string[] = [];
+    let calls = 0;
+    const CognitoUserPool = vi.fn(function (this: any, data: ConstructedPoolArgs) {
+      this.data = data;
+      this.getCurrentUser = vi.fn(() => null);
+    });
+    const CognitoUser = vi.fn(function (this: any, data: ConstructedUserArgs) {
+      const username = data.Username;
+      this.getUsername = () => username;
+      this.setSignInUserSession = vi.fn();
+      this.signOut = vi.fn();
+      this.authenticateUser = vi.fn((_details: unknown, callbacks: any) => {
+        const step = authSequence[Math.min(calls, authSequence.length - 1)];
+        calls++;
+        step(callbacks);
+      });
+      this.completeNewPasswordChallenge = vi.fn(
+        (_pwd: string, _attrs: unknown, callbacks: any) => {
+          completedUsers.push(username);
+          callbacks.onSuccess(makeSession(`${username}-id`, `${username}-access`));
+        },
+      );
+    });
+    const AuthenticationDetails = vi.fn(function (this: any, data: { Username: string; Password: string }) {
+      this.data = data;
+    });
+    const sdk = { CognitoUserPool, CognitoUser, AuthenticationDetails } as unknown as CognitoSdk;
+    return { sdk, completedUsers };
+  }
+
+  it('second signIn while a challenge is pending leaves only the second attempt pending', async () => {
+    const { sdk, completedUsers } = makeSequencedSdk([
+      (callbacks) => callbacks.newPasswordRequired({ attempt: 'first' }, {}),
+      (callbacks) => callbacks.newPasswordRequired({ attempt: 'second' }, {}),
+    ]);
+    const client = makeClient({ sdk });
+    const first = await client.signIn('first@example.com', 'TempPass1!');
+    expect(first.challenge).toBe('NEW_PASSWORD_REQUIRED');
+    const second = await client.signIn('second@example.com', 'TempPass2!');
+    expect(second.challenge).toBe('NEW_PASSWORD_REQUIRED');
+    // Completing must finish the second attempt's challenge only.
+    const tokens = await client.completeNewPassword('NewPass123!');
+    expect(completedUsers).toEqual(['second@example.com']);
+    expect(tokens).toEqual({ idToken: 'second@example.com-id', accessToken: 'second@example.com-access' });
+    // Challenge is consumed — no stale challenge remains.
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
+  });
+
+  it('failed signIn clears prior tokens and the pending challenge with the mapped error', async () => {
+    const { sdk } = makeSequencedSdk([
+      (callbacks) => callbacks.onSuccess(makeSession('prior-id', 'prior-access')),
+      (callbacks) => callbacks.onFailure({ code: 'NotAuthorizedException' }),
+    ]);
+    const mapped = new Error('mapped failure');
+    const mapper = vi.fn(() => mapped);
+    const client = makeClient({ sdk, errorMapper: mapper });
+    await client.signIn('prior@example.com', 'Pass123!');
+    expect(client.getUser()).toBe('prior@example.com');
+    await expect(client.signIn('prior@example.com', 'wrong')).rejects.toBe(mapped);
+    expect(mapper).toHaveBeenCalledWith(expect.objectContaining({ code: 'NotAuthorizedException' }));
+    expect(client.getUser()).toBeNull();
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
+  });
+
+  it('failed signIn after a pending challenge clears the stale challenge', async () => {
+    const { sdk } = makeSequencedSdk([
+      (callbacks) => callbacks.newPasswordRequired({ attempt: 'first' }, {}),
+      (callbacks) => callbacks.onFailure({ code: 'NotAuthorizedException' }),
+    ]);
+    const client = makeClient({ sdk });
+    const first = await client.signIn('first@example.com', 'TempPass1!');
+    expect(first.challenge).toBe('NEW_PASSWORD_REQUIRED');
+    await expect(client.signIn('second@example.com', 'wrong')).rejects.toThrow('NotAuthorizedException');
+    expect(client.getUser()).toBeNull();
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
+  });
+
+  it('successful signIn clears a prior pending challenge', async () => {
+    const { sdk, completedUsers } = makeSequencedSdk([
+      (callbacks) => callbacks.newPasswordRequired({ attempt: 'first' }, {}),
+      (callbacks) => callbacks.onSuccess(makeSession('second-id', 'second-access')),
+    ]);
+    const client = makeClient({ sdk });
+    await client.signIn('first@example.com', 'TempPass1!');
+    const result = await client.signIn('second@example.com', 'Pass123!');
+    expect(result).toEqual({ challenge: null, idToken: 'second-id', accessToken: 'second-access' });
+    expect(client.getUser()).toBe('second@example.com');
+    // The first attempt's challenge must be gone — completing now throws.
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
+    expect(completedUsers).toEqual([]);
+  });
 });
