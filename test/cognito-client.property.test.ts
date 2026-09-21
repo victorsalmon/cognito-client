@@ -28,6 +28,8 @@ function makeMockSdk(opts: {
   accessToken?: string;
   challenge?: boolean;
   failure?: unknown;
+  forgotPasswordFailure?: unknown;
+  confirmPasswordFailure?: unknown;
 } = {}): { sdk: CognitoSdk; captured: Captured } {
   const idToken = opts.idToken ?? 'id';
   const accessToken = opts.accessToken ?? 'access';
@@ -69,8 +71,14 @@ function makeMockSdk(opts: {
     });
     this.getSession = vi.fn((cb: any) => cb(null, session));
     this.confirmRegistration = vi.fn((_c: string, _f: boolean, cb: any) => cb(null, 'SUCCESS'));
-    this.forgotPassword = vi.fn(({ onSuccess }: any) => onSuccess());
-    this.confirmPassword = vi.fn((_c: string, _p: string, { onSuccess }: any) => onSuccess());
+    this.forgotPassword = vi.fn(({ onSuccess, onFailure }: any) =>
+      opts.forgotPasswordFailure !== undefined ? onFailure(opts.forgotPasswordFailure) : onSuccess(),
+    );
+    this.confirmPassword = vi.fn((_c: string, _p: string, { onSuccess, onFailure }: any) =>
+      opts.confirmPasswordFailure !== undefined
+        ? onFailure(opts.confirmPasswordFailure)
+        : onSuccess(),
+    );
     this.completeNewPasswordChallenge = vi.fn((_pwd: string, attrs: Record<string, unknown>, cb: any) => {
       captured.completeAttrs.push(attrs);
       cb.onSuccess(session);
@@ -397,6 +405,28 @@ describe('CognitoClient — property tests', () => {
     );
   });
 
+  it('forgotPassword: rejects with the mapped error when the SDK reports a failure', async () => {
+    const err = { code: 'UserNotFoundException' };
+    const mapped = new Error('MAPPED');
+    const { sdk } = makeMockSdk({ forgotPasswordFailure: err });
+    const mapper = vi.fn(() => mapped);
+    const client = makeClient({ sdk, errorMapper: mapper });
+    await expect(client.forgotPassword('u@example.com')).rejects.toBe(mapped);
+    expect(mapper).toHaveBeenCalledWith(err);
+  });
+
+  it('confirmNewPassword: rejects with the mapped error when the SDK reports a failure', async () => {
+    const err = { code: 'ExpiredCodeException' };
+    const mapped = new Error('MAPPED');
+    const { sdk } = makeMockSdk({ confirmPasswordFailure: err });
+    const mapper = vi.fn(() => mapped);
+    const client = makeClient({ sdk, errorMapper: mapper });
+    await expect(
+      client.confirmNewPassword('u@example.com', '123456', 'NewPass123!'),
+    ).rejects.toBe(mapped);
+    expect(mapper).toHaveBeenCalledWith(err);
+  });
+
   it('getSession: returns null when no current user is cached', async () => {
     await fc.assert(
       fc.asyncProperty(fc.boolean(), async (signedInBefore) => {
@@ -474,6 +504,11 @@ describe('CognitoClient — property tests', () => {
           userInstance.getSession = vi.fn((cb: any) => cb(null, { isValid: () => false }));
           await expect(client.refreshSession()).rejects.toThrow(/No valid cached session/);
         }
+        // Terminal failure — the tokens cached by the earlier signIn must not
+        // survive a refresh that could not produce a valid session.
+        expect(client.getIdToken()).toBeNull();
+        expect(client.getAccessToken()).toBeNull();
+        expect(client.getUser()).toBeNull();
       }),
     );
   });
