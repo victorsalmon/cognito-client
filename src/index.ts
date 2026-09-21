@@ -159,7 +159,6 @@ function resolveSupplier<T>(value: T | (() => T)): T {
  * radius of a stolen refresh token, so an adapter that passes it is rejected.
  */
 export function assertSessionStorageOnly(storage: Storage | undefined): void {
-  if (!storage) return;
   const maybeLocal = (globalThis as { localStorage?: Storage }).localStorage;
   if (maybeLocal && storage === maybeLocal) {
     throw new Error(
@@ -186,6 +185,8 @@ export function isTokenExpired(token: string, nowMs: number = Date.now()): boole
     const payload = JSON.parse(
       atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')),
     ) as { exp?: unknown };
+    // Fail closed on a missing / non-numeric `exp`, and on a non-finite one
+    // (`typeof` narrows the first operand so `Number.isFinite` sees a number).
     if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) return true;
     return payload.exp * 1000 <= nowMs + TOKEN_EXPIRY_SKEW_SEC * 1000;
   } catch {
@@ -246,7 +247,11 @@ export class CognitoClient {
     });
   }
 
-  /** Factory for all CognitoUser instances so they share the pool's session storage. */
+  /**
+   * Factory for all CognitoUser instances so they share the pool's session
+   * storage. It initializes the pool first, so every auth method that reaches
+   * the SDK through it is guaranteed a pool.
+   */
   private newCognitoUser(username: string): CognitoUserLike {
     this.initPool();
     return new this.options.sdk.CognitoUser({
@@ -284,7 +289,6 @@ export class CognitoClient {
    * SMS. Calls `confirmRegistration(code, true, cb)` with alias creation forced.
    */
   confirmSignUp(email: string, code: string): Promise<void> {
-    this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.confirmRegistration(code, FORCE_ALIAS_CREATION, (err, _result) => {
@@ -301,7 +305,6 @@ export class CognitoClient {
    * caller must complete via `completeNewPassword()`.
    */
   signIn(email: string, password: string): Promise<SignInResult> {
-    this.initPool();
     // Fail-closed: a new attempt invalidates any prior attempt's in-flight
     // NEW_PASSWORD_REQUIRED challenge and prior in-memory tokens before
     // authenticating, so a stale challenge can never complete afterwards.
@@ -494,7 +497,6 @@ export class CognitoClient {
    * through either `onSuccess` or `inputVerificationCode`.
    */
   forgotPassword(email: string): Promise<void> {
-    this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.forgotPassword({
@@ -510,7 +512,6 @@ export class CognitoClient {
    * new password.
    */
   confirmNewPassword(email: string, code: string, newPassword: string): Promise<void> {
-    this.initPool();
     const cognitoUser = this.newCognitoUser(email);
     return new Promise((resolve, reject) => {
       cognitoUser.confirmPassword(code, newPassword, {
