@@ -34,17 +34,19 @@ function installMockSdk(overrides: {
   invalidSession?: boolean;
   noCurrentUser?: boolean;
 }) {
-  const captured: { pools: ConstructedPoolArgs[]; users: ConstructedUserArgs[]; setSignInUserSessionCalls: unknown[]; signOutCalls: number } = {
+  const captured: { pools: ConstructedPoolArgs[]; users: ConstructedUserArgs[]; setSignInUserSessionCalls: unknown[]; signOutCalls: number; poolInstances: any[] } = {
     pools: [],
     users: [],
     setSignInUserSessionCalls: [],
     signOutCalls: 0,
+    poolInstances: [],
   };
 
   let currentUserInstance: any = null;
 
   const CognitoUserPool = vi.fn(function (this: any, data: ConstructedPoolArgs) {
     captured.pools.push(data);
+    captured.poolInstances.push(this);
     this.data = data;
     this.signUp = vi.fn(
       (_email: string, _password: string, attributeList: unknown[], _attrs: unknown, cb: (err: unknown, result: unknown) => void) => {
@@ -190,6 +192,38 @@ describe('CognitoClient — dependency injection', () => {
     const client = makeClient({ sdk, errorMapper: mapper });
     await expect(client.signIn('test@example.com', 'wrong')).rejects.toThrow('mapped error');
     expect(mapper).toHaveBeenCalledWith(expect.objectContaining({ code: 'NotAuthorizedException' }));
+  });
+
+  it('allows an omitted storage hook in a non-browser runtime', () => {
+    // Without a `localStorage` global the SDK has nowhere to fall back to, so an
+    // undefined storage hook is legitimate and no Storage option is passed.
+    const { sdk, captured } = installMockSdk({});
+    vi.stubGlobal('localStorage', undefined);
+    try {
+      const client = makeClient({ sdk, storage: () => undefined });
+      expect(() => client.signUp('test@example.com', 'Pass123!')).not.toThrow();
+      expect(captured.pools).toHaveLength(1);
+      expect(captured.pools[0].Storage).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    ['signIn', (client: CognitoClient) => client.signIn('test@example.com', 'Pass123!')],
+    ['confirmSignUp', (client: CognitoClient) => client.confirmSignUp('test@example.com', '123456')],
+    ['forgotPassword', (client: CognitoClient) => client.forgotPassword('test@example.com')],
+    [
+      'confirmNewPassword',
+      (client: CognitoClient) => client.confirmNewPassword('test@example.com', '123456', 'NewPass123!'),
+    ],
+  ])('%s initializes the pool and shares it with its CognitoUser', async (_name, invoke) => {
+    const { sdk, captured } = installMockSdk({});
+    const client = makeClient({ sdk });
+    await invoke(client);
+    expect(captured.pools).toHaveLength(1);
+    expect(captured.users).toHaveLength(1);
+    expect(captured.users[0].Pool).toBe(captured.poolInstances[0]);
   });
 });
 
@@ -370,14 +404,34 @@ describe('CognitoClient — ensureSession page-load gate', () => {
     await expect(client.ensureSession('/signin')).resolves.toBeNull();
     expect(navigate).toHaveBeenCalledTimes(1);
   });
+
+  it('never throws when the pool itself cannot be initialized', async () => {
+    // A storage misconfiguration makes initPool() throw synchronously inside
+    // getSession(); ensureSession() must swallow that too, redirect, and
+    // resolve null rather than rejecting.
+    const { sdk } = installMockSdk({});
+    const navigate = vi.fn();
+    const client = makeClient({
+      sdk,
+      navigate,
+      storage: () => localStorage,
+      getCurrentPath: () => '/portal',
+    });
+    await expect(client.ensureSession('/signin')).resolves.toBeNull();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith('/signin?returnTo=' + encodeURIComponent('/portal'));
+  });
 });
 
 describe('isTokenExpired — fail-closed JWT expiry probe', () => {
+  function b64(payloadJson: string): string {
+    return btoa(payloadJson).replace(/\+/g, '-').replace(/\//g, '_');
+  }
+
   function jwt(exp: number | null): string {
     const payload: Record<string, unknown> = { sub: 'synthetic-subject' };
     if (exp !== null) payload.exp = exp;
-    const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_');
-    return `header.${b64}.signature`;
+    return `header.${b64(JSON.stringify(payload))}.signature`;
   }
 
   it('reports expired and valid tokens around the skew window', async () => {
@@ -392,6 +446,43 @@ describe('isTokenExpired — fail-closed JWT expiry probe', () => {
     expect(isTokenExpired('not-a-jwt')).toBe(true);
     expect(isTokenExpired(jwt(null))).toBe(true);
     expect(isTokenExpired('')).toBe(true);
+  });
+
+  it('fails closed when the payload cannot be decoded or parsed', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    // A two-part token reaches the decode step: a non-base64 payload, a base64
+    // payload that is not JSON, and an empty payload must all fail closed.
+    expect(isTokenExpired('header.@@@not-base64@@@')).toBe(true);
+    expect(isTokenExpired(`header.${btoa('not json')}`)).toBe(true);
+    expect(isTokenExpired('header.')).toBe(true);
+  });
+
+  it('judges a two-part token on its payload instead of rejecting it', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    const nowSec = Math.floor(Date.now() / 1000);
+    // `parts.length < 2` is the malformed guard — exactly two parts still carry
+    // a payload at index 1, which must be parsed and evaluated.
+    expect(isTokenExpired(`header.${b64(JSON.stringify({ exp: nowSec + 3600 }))}`)).toBe(false);
+    expect(isTokenExpired(`header.${b64(JSON.stringify({ exp: nowSec - 3600 }))}`)).toBe(true);
+  });
+
+  it('fails closed on a non-finite exp claim', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    // `JSON.parse` turns an overflowing numeric literal into Infinity: the type
+    // is a number but the value is not finite, so the probe must fail closed.
+    expect(isTokenExpired(`header.${b64('{"exp":1e999}')}.signature`)).toBe(true);
+  });
+
+  it('treats the inclusive skew boundary and the inside of the window as expired', async () => {
+    const { isTokenExpired } = await import('../src/index');
+    const expSec = 1_700_000_000;
+    const expMs = expSec * 1000;
+    // Exactly at the boundary (nowMs + 60s === exp) the token counts as expired.
+    expect(isTokenExpired(jwt(expSec), expMs - 60_000)).toBe(true);
+    // One millisecond later it is no longer inside the tolerated skew.
+    expect(isTokenExpired(jwt(expSec), expMs - 60_001)).toBe(false);
+    // Still live by 30s, but inside the skew: fail closed and treat as expired.
+    expect(isTokenExpired(jwt(expSec), expMs - 30_000)).toBe(true);
   });
 });
 
@@ -611,5 +702,36 @@ describe('CognitoClient — fail-closed auth state across signIn attempts', () =
     // The first attempt's challenge must be gone — completing now throws.
     await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
     expect(completedUsers).toEqual([]);
+  });
+
+  it('a new attempt clears prior tokens before the SDK responds', async () => {
+    const { sdk } = makeSequencedSdk([
+      (callbacks) => callbacks.onSuccess(makeSession('prior-id', 'prior-access')),
+      () => {}, // the second attempt never calls back
+    ]);
+    const client = makeClient({ sdk });
+    await client.signIn('prior@example.com', 'Pass123!');
+    expect(client.getIdToken()).toBe('prior-id');
+    void client.signIn('second@example.com', 'Pass123!');
+    // The fail-closed reset runs before authenticateUser, so it applies even
+    // while the SDK is still working on the new attempt.
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+    expect(client.getUser()).toBeNull();
+  });
+
+  it('a new attempt clears a prior pending challenge before the SDK responds', async () => {
+    const { sdk } = makeSequencedSdk([
+      (callbacks) => callbacks.newPasswordRequired({ attempt: 'first' }, {}),
+      () => {}, // the second attempt never calls back
+    ]);
+    const client = makeClient({ sdk });
+    const first = await client.signIn('first@example.com', 'TempPass1!');
+    expect(first.challenge).toBe('NEW_PASSWORD_REQUIRED');
+    void client.signIn('second@example.com', 'TempPass1!');
+    // The first attempt's challenge must already be invalidated.
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(
+      /No pending password challenge/,
+    );
   });
 });
