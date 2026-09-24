@@ -166,3 +166,63 @@ Focused assertions, one file at a time, in `test/cognito-client.test.ts` and
 - `pnpm test` — exit 0 (82 passed, 4 files).
 - `pnpm run build` — exit 0.
 - `git diff --check` — exit 0.
+
+## 7. Nightly mutation round (2026-09-24)
+
+Incremental Stryker run (`stryker.config.json`, `mutate: src/**/*.ts`,
+`coverageAnalysis: perTest`, `ignoreStatic: true`), vitest `4.1.11` with
+`@stryker-mutator/vitest-runner` `10.0.0`. The fail-closed canary was run
+before and after: no run had `Killed == 0` with survivors, no non-`NoCoverage`
+mutant reported `testsCompleted == 0`, and no run printed
+`Ran 0.00 tests per mutant` (the vitest-5 collapse signature).
+
+| Metric | Baseline (incremental) | Final (incremental) |
+|---|---|---|
+| Total mutants | 199 | 199 |
+| Killed | 192 | 193 |
+| Survived | 3 | 2 |
+| No coverage | 0 | 0 |
+| Mutation score (total / covered) | 98.46% / 98.46% | 98.97% / 98.97% |
+
+Tests: 82 → 83 (`pnpm test`), all green; `pnpm run typecheck` and
+`pnpm run build` green.
+
+### Test gap closed
+
+- `signIn` `onFailure` backstop (`src/index.ts:331`): added
+  `a stale failed attempt clears tokens set by a later successful attempt` to
+  the `fail-closed auth state across signIn attempts` describe in
+  `test/cognito-client.test.ts`. The first attempt's SDK callbacks are deferred
+  while a second attempt succeeds; when the stale attempt then fails, the
+  `onFailure` reset must clear the later attempt's tokens too. This kills the
+  `clearTokens()`-removal mutant (id 93).
+- Correction to the 2026-09-21 record (§5 table, third row): that mutant was
+  classified as equivalent ("unobservable for a well-behaved SDK"). That was
+  wrong — the entry-of-`signIn` reset only clears state that exists at entry,
+  while a concurrent attempt can set tokens *between* the entry reset and the
+  stale `onFailure`. Deferred SDK callbacks are ordinary async behavior, so the
+  mutant was always observable; it was a test gap, not an equivalence. The new
+  test locks the fail-closed invariant in: no authenticated state may survive
+  any auth failure. No source change was needed — the behavior was already
+  correct.
+
+### Surviving mutants (documented, not suppressed)
+
+The two remaining survivors are the `isTokenExpired` guards from §5, unchanged:
+
+| Location | Mutator | Why it is equivalent |
+|---|---|---|
+| `src/index.ts:184:9` | ConditionalExpression | Replacing `if (parts.length < 2) return true;` with `if (false)` is unobservable: with fewer than two parts `parts[1]` is `undefined`, so `parts[1].replace(...)` throws and the surrounding `catch` returns `true` anyway. The guard is kept as the explicit fail-closed statement for malformed tokens. |
+| `src/index.ts:190:9` | ConditionalExpression | Replacing `if (typeof payload.exp !== 'number' \|\| !Number.isFinite(payload.exp))` with `if (false \|\| !Number.isFinite(payload.exp))` is a Boolean identity: `Number.isFinite` is strict, so `typeof x !== 'number'` implies `!Number.isFinite(x)` and the first disjunct is subsumed. |
+
+Both guards are kept: they are explicit fail-closed statements at a trust
+boundary (and the `typeof` check additionally narrows `payload.exp` from
+`unknown` to `number` for the comparison on the next line, so removing it
+would force a cast for zero behavioral gain).
+
+## 8. Validation (nightly mutation round, 2026-09-24)
+
+- `pnpm run typecheck` — exit 0.
+- `pnpm test` — exit 0 (83 passed, 4 files).
+- `pnpm run build` — exit 0.
+- `git diff --check` — exit 0.

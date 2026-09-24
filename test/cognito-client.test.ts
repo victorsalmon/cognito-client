@@ -689,6 +689,30 @@ describe('CognitoClient — fail-closed auth state across signIn attempts', () =
     await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
   });
 
+  it('a stale failed attempt clears tokens set by a later successful attempt', async () => {
+    let staleCallbacks: any = null;
+    const { sdk } = makeSequencedSdk([
+      (callbacks) => {
+        staleCallbacks = callbacks; // the first attempt stays in flight
+      },
+      (callbacks) => callbacks.onSuccess(makeSession('second-id', 'second-access')),
+    ]);
+    const client = makeClient({ sdk });
+    const stale = client.signIn('first@example.com', 'Pass123!');
+    const second = await client.signIn('second@example.com', 'Pass123!');
+    expect(second).toEqual({ challenge: null, idToken: 'second-id', accessToken: 'second-access' });
+    expect(client.getUser()).toBe('second@example.com');
+    // The stale attempt now fails: fail-closed, the onFailure reset must clear
+    // the later attempt's tokens too — no authenticated state may survive any
+    // auth failure (kills the `this.clearTokens()` removal mutant in onFailure).
+    staleCallbacks.onFailure({ code: 'NotAuthorizedException' });
+    await expect(stale).rejects.toThrow('NotAuthorizedException');
+    expect(client.getUser()).toBeNull();
+    expect(client.getIdToken()).toBeNull();
+    expect(client.getAccessToken()).toBeNull();
+    await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(/No pending password challenge/);
+  });
+
   it('successful signIn clears a prior pending challenge', async () => {
     const { sdk, completedUsers } = makeSequencedSdk([
       (callbacks) => callbacks.newPasswordRequired({ attempt: 'first' }, {}),
