@@ -226,3 +226,43 @@ would force a cast for zero behavioral gain).
 - `pnpm test` — exit 0 (83 passed, 4 files).
 - `pnpm run build` — exit 0.
 - `git diff --check` — exit 0.
+
+## 9. Nightly mutation round (2026-09-25)
+
+Incremental Stryker run (`stryker.config.json`, `mutate: src/**/*.ts`,
+`coverageAnalysis: perTest`, `ignoreStatic: true`; no `--force`, no `--full`,
+incremental state kept), vitest `4.1.11` with
+`@stryker-mutator/vitest-runner` `10.0.0`. The fail-closed canary was run
+before and after: no run had `Killed == 0` with survivors, no non-`NoCoverage`,
+non-`Ignored` mutant reported `testsCompleted == 0`, and no run printed
+`Ran 0.00 tests per mutant` (the vitest-5 collapse signature).
+
+| Metric | Scoped baseline (`src/index.ts:295-340`, TEMP incremental file) | Full (incremental) |
+|---|---|---|
+| Total mutants | 12 | 199 |
+| Killed | 12 | 193 |
+| Survived | 0 | 2 |
+| No coverage | 0 | 0 |
+| Ignored | — | 4 |
+| Mutation score (total / covered) | 100.00% / 100.00% | 98.97% / 98.97% |
+| Tests per mutant | 7.17 | 2.47 |
+
+Pure-measurement night: the full run reproduces the 2026-09-24 final exactly
+(199 total / 193 killed / 2 survived / 0 no-coverage, 98.97%). The two
+survivors are the same `isTokenExpired` guards documented as provably
+equivalent in §5 and §7 (`src/index.ts:184:9` and `src/index.ts:190:9`,
+both ConditionalExpression) — no new test gap, no real bug, no source or
+test change warranted. The scoped baseline improved from the 70.00% / 7
+killed / 3 survived recorded before the 2026-09-24 hardening to 100.00% /
+12 killed / 0 survived because that line range's mutants (including the
+`signIn` `onFailure` backstop at `src/index.ts:331`) are now killed.
+
+Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
+`pnpm run build` green.
+
+## 10. Validation (nightly mutation round, 2026-09-25)
+
+- `pnpm run typecheck` — exit 0.
+- `pnpm test` — exit 0 (83 passed, 4 files).
+- `pnpm run build` — exit 0.
+- `git diff --check` — exit 0.
