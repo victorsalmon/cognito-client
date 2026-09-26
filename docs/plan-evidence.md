@@ -266,3 +266,54 @@ Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
 - `pnpm test` — exit 0 (83 passed, 4 files).
 - `pnpm run build` — exit 0.
 - `git diff --check` — exit 0.
+
+## 11. Nightly mutation round (2026-09-26)
+
+Incremental Stryker run (`stryker.config.json`, `mutate: src/**/*.ts`,
+`coverageAnalysis: perTest`, `ignoreStatic: true`; no `--force`, no `--full`,
+incremental state kept), vitest `4.1.11` with
+`@stryker-mutator/vitest-runner` `10.0.0`. The fail-closed canary was run
+before and after: no run had `Killed == 0` with survivors, no non-`NoCoverage`,
+non-`Ignored` mutant reported `testsCompleted == 0`, and no run printed
+`Ran 0.00 tests per mutant` (the vitest-5 collapse signature).
+
+| Metric | Scoped baseline (`src/index.ts:295-340`, TEMP incremental file) | Full (incremental) |
+|---|---|---|
+| Total mutants | 12 | 199 |
+| Killed | 12 | 193 |
+| Survived | 0 | 2 |
+| No coverage | 0 | 0 |
+| Ignored | — | 4 |
+| Mutation score (total / covered) | 100.00% / 100.00% | 98.97% / 98.97% |
+| Tests per mutant | 7.17 | 2.47 |
+
+Pure-measurement night: the full run reproduces the 2026-09-24 and 2026-09-25
+finals exactly (199 total / 193 killed / 2 survived / 0 no-coverage, 98.97%).
+The two survivors are the same `isTokenExpired` guards documented as provably
+equivalent in §5 and §7 (`src/index.ts:184:9` and `src/index.ts:190:9`,
+both ConditionalExpression) — no new test gap, no real bug.
+
+### Why the survivors stay documented, not suppressed
+
+A scoped `// Stryker disable next-line ConditionalExpression` was considered
+and rejected: the current report shows each guard line also carries *killed*
+ConditionalExpression mutants that pin real behavior (line 184: mutant 21,
+condition → `true`; line 190: mutants 26–27, whole-condition → `true` /
+`false`). A line-scoped disable cannot target a single mutant, so it would
+collateral-ignore those killed mutants and silently weaken the suite's
+demonstrated power. Removing the guards is likewise off the table: both are
+explicit fail-closed statements at a trust boundary (untrusted JWT strings),
+and the `typeof` check additionally narrows `payload.exp` from `unknown` to
+`number` for the comparison on the next line. No test can kill an equivalent
+mutant, so no source or test change is warranted; the guards and their proofs
+stay as documented in §7.
+
+Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
+`pnpm run build` green.
+
+## 12. Validation (nightly mutation round, 2026-09-26)
+
+- `pnpm run typecheck` — exit 0.
+- `pnpm test` — exit 0 (83 passed, 4 files).
+- `pnpm run build` — exit 0.
+- `git diff --check` — exit 0.
