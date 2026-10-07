@@ -769,3 +769,56 @@ Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
 - `pnpm test` — exit 0 (83 passed, 4 files).
 - `pnpm run build` — exit 0.
 - `git diff --check` — exit 0.
+
+## 33. Nightly mutation round (2026-10-07)
+
+Incremental Stryker run (`stryker.config.json`, `mutate: src/**/*.ts`,
+`coverageAnalysis: perTest`, `ignoreStatic: true`; no `--force`, no `--full`,
+incremental state kept), vitest `4.1.11` with
+`@stryker-mutator/vitest-runner` `10.0.0`. The fail-closed canary was run
+before and after: no run had `Killed == 0` with survivors, no non-`NoCoverage`,
+non-`Ignored` mutant reported `testsCompleted == 0` (verified by parsing
+`stryker-report/mutation/report.json`: zero such mutants), and no run printed
+`Ran 0.00 tests per mutant` (the vitest-5 collapse signature).
+
+| Metric | Scoped baseline (`src/index.ts:295-340`) | Full (incremental) |
+|---|---|---|
+| Total mutants | 12 (all reused from incremental state) | 199 |
+| Killed | 12 | 193 |
+| Survived | 0 | 2 |
+| No coverage | 0 | 0 |
+| Ignored | — | 4 |
+| Mutation score (total / covered) | 100.00% / 100.00% | 98.97% / 98.97% |
+| Tests per mutant | 2.47 (aggregate) | 2.47 |
+
+Pure-measurement night: the full run reproduces the 2026-09-24 through
+2026-10-06 finals exactly (199 total / 193 killed / 2 survived /
+0 no-coverage, 98.97%). The two survivors are the same `isTokenExpired`
+guards documented as provably equivalent in §5 and §7
+(`src/index.ts:184:9` and `src/index.ts:190:9`,
+both ConditionalExpression) — no new test gap, no real bug. The
+keep-documented rationale from §11 still holds (line-scoped disable would
+collateral-ignore killed mutants on the same lines; removal is off the
+table for trust-boundary guards — and the line-190 `typeof` check is
+additionally load-bearing for TypeScript narrowing), so no source or test
+change is warranted.
+
+Layer-0 grooming note: `salmon-cognito-client` (2026-09-19 lane, clean
+worktree) was reviewed and deliberately left untouched — it pins
+`vitest ^5.0.1` (hard-rule poison: Stryker/vitest-runner 10 pattern split
+collapses the run to 0.00%), and per the 2026-10-06 analysis merging would
+regress `main` on three axes with nothing worth cherry-picking. The
+`wip/orphan/*` branches are consult-class and were not touched. Remote
+branches `origin/manual/cognito-batch` and
+`origin/mutation/2026-09-21-incremental-hardening` carry zero unique commits
+vs `main` (fully landed).
+
+Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
+`pnpm run build` green.
+
+## 34. Validation (nightly mutation round, 2026-10-07)
+
+- `pnpm run typecheck` — exit 0.
+- `pnpm test` — exit 0 (83 passed, 4 files).
+- `pnpm run build` — exit 0.
+- `git diff --check` — exit 0.
