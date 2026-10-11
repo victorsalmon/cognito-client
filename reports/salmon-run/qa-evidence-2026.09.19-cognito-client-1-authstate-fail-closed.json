@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "decision": "pass",
+  "disposition": "tests-already-adequate",
+  "repository": "C:\\Repos\\Public\\cognito-client\\.worktrees\\salmon-cognito-client",
+  "commit": "0ff80edcdab8e018519f54ccd4450fa1cf3bd215",
+  "commands": [
+    {
+      "name": "typecheck",
+      "command": "pnpm run typecheck",
+      "exitCode": 0,
+      "result": "tsc --noEmit clean"
+    },
+    {
+      "name": "unit tests",
+      "command": "pnpm exec vitest run test/cognito-client.test.ts",
+      "exitCode": 0,
+      "result": "38 passed"
+    },
+    {
+      "name": "property tests",
+      "command": "pnpm exec vitest run test/cognito-client.property.test.ts",
+      "exitCode": 0,
+      "result": "24 passed"
+    },
+    {
+      "name": "full test suite",
+      "command": "pnpm test",
+      "exitCode": 0,
+      "result": "3 files, 65 passed"
+    }
+  ],
+  "behaviorsProven": [
+    "AC-1: second signIn while NEW_PASSWORD_REQUIRED pending leaves only second attempt pending (unit cross-attempt test)",
+    "AC-2: failed signIn rejects mapped error with getUser/getIdToken/getAccessToken null (unit + fast-check property)",
+    "AC-3: completeNewPassword after failed signIn throws no-pending-challenge (unit + property)",
+    "AC-4: getSession sync-throw calls SDK signOut, clears tokens, resolves null (unit test)",
+    "AC-5: cross-attempt, failed-signIn, and failed-signIn property coverage present and passing",
+    "AC-6: typecheck and full suite green with no weakened assertions"
+  ],
+  "changedTestFiles": [],
+  "followUps": []
+}
