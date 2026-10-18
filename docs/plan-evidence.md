@@ -1347,3 +1347,66 @@ Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
 - `pnpm test` — exit 0 (83 passed, 4 files).
 - `pnpm run build` — exit 0.
 - `git diff --check` — exit 0.
+
+## 51. Nightly mutation round (2026-10-18)
+
+Incremental Stryker run (`stryker.config.json`, `mutate: src/**/*.ts`,
+`coverageAnalysis: perTest`, `ignoreStatic: true`; no `--force`, no `--full`,
+incremental state kept), vitest `4.1.11` with
+`@stryker-mutator/vitest-runner` `10.0.0`. The fail-closed canary was run
+before and after: no run had `Killed == 0` with survivors, no non-`NoCoverage`,
+non-`Ignored` mutant reported `testsCompleted == 0` (verified by parsing
+`stryker-report/mutation/report.json`: zero such mutants), and no run printed
+`Ran 0.00 tests per mutant` (the vitest-5 collapse signature).
+
+| Metric | Scoped baseline (`src/index.ts:295-340`, TEMP incremental file) | Full (incremental) |
+|---|---|---|
+| Total mutants | 12 | 199 |
+| Killed | 12 | 193 |
+| Survived | 0 | 2 |
+| No coverage | 0 | 0 |
+| Ignored | — | 4 |
+| Mutation score (total / covered) | 100.00% / 100.00% | 98.97% / 98.97% |
+| Tests per mutant | 6.17 | 2.47 |
+
+Pure-measurement night: the full run reproduces the 2026-09-24 through
+2026-10-17 finals exactly (199 total / 193 killed / 2 survived /
+0 no-coverage, 98.97%; ~10 s wall clock, incremental state reused). The two
+survivors are the same `isTokenExpired` guards documented as provably
+equivalent in §5 and §7 (`src/index.ts:184:9` and `src/index.ts:190:9`,
+both ConditionalExpression, `testsCompleted` 6 and 5 respectively, zero
+`testsCompleted == 0` outside `NoCoverage`/`Ignored`) — no new test gap,
+no real bug. Their equivalence stands on the standing proofs (§30
+24-token differential harness, §41 `typeof`-narrowing typecheck proof,
+§43 80,000-fuzz comparison plus the reverted disable experiment, §45
+100,120-case comparison): no test can kill an equivalent mutant,
+line-scoped suppression hides killed mutants too, and removal is off the
+table for trust-boundary guards — so no source or test change is
+warranted.
+
+Layer-0 grooming note: `salmon-cognito-client` (2026-09-19 lane) was reviewed
+and deliberately left untouched — it still pins `vitest ^5.0.1` (verified
+again tonight via `git show salmon-cognito-client:package.json`;
+hard-rule poison, must not merge). Its useful content remains fully
+superseded per the 2026-10-06/10-08/10-11/10-15/10-17 analyses and tonight's
+re-diff (fail-closed `src/` behavior and every test hunk already on `main`;
+keep-worthy QA evidence salvaged onto `main` by the weekly run as `e5a179e`,
+verified ancestor of `main` tonight), with nothing worth cherry-picking;
+per the no-delete-others'-branches rail the local branch was kept. The
+`wip/orphan/*` branches are consult-class and were not touched. Remote
+branches `origin/manual/cognito-batch` and
+`origin/mutation/2026-09-21-incremental-hardening` carry zero unique commits
+vs `main` (fully landed, verified via `git rev-list --count` tonight).
+Only one git worktree exists (the checkout itself); `.worktrees/` holds
+only the stray unregistered dir (not a git worktree) and was left alone
+per the no-delete rails.
+
+Tests: 83 (`pnpm test`), all green; `pnpm run typecheck` and
+`pnpm run build` green.
+
+## 52. Validation (nightly mutation round, 2026-10-18)
+
+- `pnpm run typecheck` — exit 0.
+- `pnpm test` — exit 0 (83 passed, 4 files).
+- `pnpm run build` — exit 0.
+- `git diff --check` — exit 0.
