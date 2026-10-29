@@ -28,11 +28,30 @@
 /** Domain challenge name surfaced when a user must set a new permanent password. */
 const NEW_PASSWORD_REQUIRED = 'NEW_PASSWORD_REQUIRED' as const;
 
+/** Domain challenge name surfaced when a second factor must be completed. */
+const MFA_REQUIRED = 'MFA_REQUIRED' as const;
+
+/** Domain challenge name surfaced when the user must enrol a second factor. */
+const MFA_SETUP = 'MFA_SETUP' as const;
+
+/** Domain challenge name surfaced when the user must pick an MFA channel first. */
+const SELECT_MFA_TYPE = 'SELECT_MFA_TYPE' as const;
+
+/** Cognito MFA challenge types this client can complete. */
+export type MfaChallengeType = 'SMS_MFA' | 'SOFTWARE_TOKEN_MFA';
+
+/** MFA challenge parameters Cognito hands the client (delivery target hints). */
+export type MfaChallengeParameters = Record<string, string>;
+
 /** Error message shown when `completeNewPassword` is called without a challenge in flight. */
 const NO_PENDING_CHALLENGE_MESSAGE = 'No pending password challenge. Please sign in again.';
 
 /** Error message shown when `refreshSession` has no cached user. */
 const NO_CACHED_SESSION_MESSAGE = 'No cached session to refresh';
+
+/** Error message shown when `sendMFACode`/`selectMfaType` has no challenge in flight. */
+const NO_PENDING_MFA_CHALLENGE_MESSAGE =
+  'No pending multi-factor challenge. Please sign in again.';
 
 /** Error message shown when `refreshSession` cannot retrieve a valid cached session. */
 const NO_VALID_CACHED_SESSION_MESSAGE = 'No valid cached session';
@@ -43,13 +62,77 @@ const NO_VALIDATION_DATA = null;
 /** Force alias creation when confirming sign-up. */
 const FORCE_ALIAS_CREATION = true;
 
-/** SignIn result — either tokens (success) or a challenge that must be completed. */
-export type SignInResult =
+/** The MFA challenge types this client can complete, in preference order. */
+const MFA_CHALLENGE_TYPES: readonly MfaChallengeType[] = ['SOFTWARE_TOKEN_MFA', 'SMS_MFA'];
+
+/**
+ * Normalize the challenge name Cognito hands the SDK callback to a challenge
+ * type. The callback name is authoritative when it is one of the two known
+ * factors; otherwise the caller's fallback applies (an older pool vintage may
+ * omit it).
+ */
+function mfaTypeOf(challengeName: unknown, fallback: MfaChallengeType): MfaChallengeType {
+  return MFA_CHALLENGE_TYPES.includes(challengeName as MfaChallengeType)
+    ? (challengeName as MfaChallengeType)
+    : fallback;
+}
+
+/**
+ * Read the factor list out of a SELECT_MFA_TYPE challenge. Cognito serializes
+ * it in `challengeParameters.MFAS_CAN_CHOOSE` (a JSON array, or a bracketed
+ * comma list on older pool vintages). Unknown values are dropped; an
+ * unparsable value yields an empty list (the caller offers its own default).
+ */
+function parseMfaTypes(params: MfaChallengeParameters | undefined): string[] {
+  const raw = params?.['MFAS_CAN_CHOOSE'];
+  if (typeof raw !== 'string' || raw.trim() === '') return [];
+  const text = raw.trim();
+  let candidates: unknown[];
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    candidates = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    candidates = text.replace(/^\[|\]$/g, '').split(',');
+  }
+  return candidates
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value): value is MfaChallengeType =>
+      MFA_CHALLENGE_TYPES.includes(value as MfaChallengeType),
+    );
+}
+
+/** SignIn result — either tokens (success) or a challenge that must be completed. */export type SignInResult =
   | { challenge: null; idToken: string; accessToken: string }
   | {
       challenge: 'NEW_PASSWORD_REQUIRED';
       userAttributes: Record<string, unknown>;
       requiredAttributes: Record<string, unknown>;
+    }
+  | {
+      /** A second factor must be completed via `sendMFACode()`. */
+      challenge: 'MFA_REQUIRED';
+      /** Which factor Cognito is waiting for (`SMS_MFA` / `SOFTWARE_TOKEN_MFA`). */
+      mfaType: MfaChallengeType;
+      challengeParameters: MfaChallengeParameters;
+    }
+  | {
+      /**
+       * The pool (or the user's settings) requires MFA but this user has no
+       * enrolled factor yet. Enrol with `associateSoftwareToken()` +
+       * `verifySoftwareToken()`, then sign in again.
+       */
+      challenge: 'MFA_SETUP';
+      challengeParameters: MfaChallengeParameters;
+    }
+  | {
+      /**
+       * The user has more than one factor enrolled and must pick one. Resolve
+       * with `selectMfaType()`; the follow-up challenge arrives as another
+       * `SignInResult`.
+       */
+      challenge: 'SELECT_MFA_TYPE';
+      mfaTypes: string[];
+      challengeParameters: MfaChallengeParameters;
     };
 
 /** Tokens returned on a successful sign-in or session refresh. */
@@ -101,6 +184,47 @@ export interface CognitoUserLike {
         userAttributes: Record<string, unknown>,
         requiredAttributes: Record<string, unknown>,
       ) => void;
+      /** SMS one-time-code challenge (`SMS_MFA`). */
+      mfaRequired?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+      /** Authenticator-app (TOTP) challenge (`SOFTWARE_TOKEN_MFA`). */
+      totpRequired?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+      /** More than one factor enrolled — the user must choose. */
+      selectMFAType?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+      /** MFA required by the pool but this user has no factor enrolled yet. */
+      mfaSetup?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+    },
+  ): void;
+  /** Complete an SMS_MFA / SOFTWARE_TOKEN_MFA challenge. */
+  sendMFACode(
+    code: string,
+    callbacks: {
+      onSuccess: (session: CognitoSessionLike, userConfirmationNecessary?: boolean) => void;
+      onFailure: (err: unknown) => void;
+    },
+    mfaType?: string,
+  ): void;
+  /** Answer a SELECT_MFA_TYPE challenge with the chosen channel. */
+  sendMFASelectionAnswer(
+    answerChallenge: string,
+    callbacks: {
+      onSuccess: (session: CognitoSessionLike) => void;
+      onFailure: (err: unknown) => void;
+      mfaRequired?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+      totpRequired?: (challengeName: string, challengeParameters: MfaChallengeParameters) => void;
+    },
+  ): void;
+  /** Begin TOTP enrolment: yields the shared secret to load into an app. */
+  associateSoftwareToken(callbacks: {
+    associateSecretCode: (secretCode: string) => void;
+    onFailure: (err: unknown) => void;
+  }): void;
+  /** Finish TOTP enrolment with a code generated from the associated secret. */
+  verifySoftwareToken(
+    totpCode: string,
+    friendlyDeviceName: string,
+    callbacks: {
+      onSuccess: (session: CognitoSessionLike) => void;
+      onFailure: (err: unknown) => void;
     },
   ): void;
   getSession(callback: (err: unknown, session: CognitoSessionLike | null) => void): void;
@@ -200,9 +324,15 @@ export class CognitoClient {
   private idToken: string | null = null;
   private accessToken: string | null = null;
   // Holds the CognitoUser mid-NEW_PASSWORD_REQUIRED challenge, set by signIn()
-  // and consumed/cleared by completeNewPassword(). Null when no challenge is in
-  // flight (or after signOut / failure).
+  // and consumed/cleared by completeNewPassword(). Also holds the user mid
+  // MFA_SETUP (enrolment), consumed by associateSoftwareToken() /
+  // verifySoftwareToken(). Null when no challenge is in flight (or after
+  // signOut / failure).
   private pendingChallengeUser: CognitoUserLike | null = null;
+  // Holds the CognitoUser mid-MFA_REQUIRED, plus which factor Cognito is
+  // waiting for. Cleared with the rest of the token state.
+  private pendingMfaUser: CognitoUserLike | null = null;
+  private pendingMfaType: MfaChallengeType | null = null;
 
   constructor(private readonly options: CognitoClientOptions) {}
 
@@ -344,6 +474,45 @@ export class CognitoClient {
             requiredAttributes,
           });
         },
+        mfaRequired: (challengeName, challengeParameters) => {
+          // SMS one-time-code challenge. Keep the user alive: sendMFACode()
+          // completes it without re-authenticating.
+          this.pendingMfaUser = cognitoUser;
+          this.pendingMfaType = mfaTypeOf(challengeName, 'SMS_MFA');
+          resolve({
+            challenge: MFA_REQUIRED,
+            mfaType: this.pendingMfaType,
+            challengeParameters: challengeParameters ?? {},
+          });
+        },
+        totpRequired: (challengeName, challengeParameters) => {
+          // Authenticator-app (TOTP) challenge — the second factor app-level
+          // role enforcement relies on.
+          this.pendingMfaUser = cognitoUser;
+          this.pendingMfaType = mfaTypeOf(challengeName, 'SOFTWARE_TOKEN_MFA');
+          resolve({
+            challenge: MFA_REQUIRED,
+            mfaType: this.pendingMfaType,
+            challengeParameters: challengeParameters ?? {},
+          });
+        },
+        selectMFAType: (_challengeName, challengeParameters) => {
+          // Several factors enrolled: the caller picks one and answers with
+          // selectMfaType(); the follow-up challenge resolves normally.
+          this.pendingMfaUser = cognitoUser;
+          this.pendingMfaType = null;
+          resolve({
+            challenge: SELECT_MFA_TYPE,
+            mfaTypes: parseMfaTypes(challengeParameters),
+            challengeParameters: challengeParameters ?? {},
+          });
+        },
+        mfaSetup: (_challengeName, challengeParameters) => {
+          // The pool requires MFA but this user has no factor yet. Enrol via
+          // associateSoftwareToken() + verifySoftwareToken().
+          this.pendingChallengeUser = cognitoUser;
+          resolve({ challenge: MFA_SETUP, challengeParameters: challengeParameters ?? {} });
+        },
       });
     });
   }
@@ -397,6 +566,136 @@ export class CognitoClient {
         },
       });
     });
+  }
+
+  /**
+   * Complete an MFA challenge issued by `signIn()` (or by `selectMfaType()`).
+   *
+   * `code` is the one-time code from the SMS message or the authenticator app.
+   * On success the tokens are stored exactly like a normal sign-in, so the
+   * caller's post-login routing (return target, consent/wizard flow) is
+   * unchanged. Fails closed when no MFA challenge is in flight.
+   */
+  async sendMFACode(code: string): Promise<SessionTokens> {
+    if (!this.pendingMfaUser) {
+      throw new Error(NO_PENDING_MFA_CHALLENGE_MESSAGE);
+    }
+    const user = this.pendingMfaUser;
+    const mfaType = this.pendingMfaType ?? undefined;
+    return new Promise((resolve, reject) => {
+      user.sendMFACode(
+        code,
+        {
+          onSuccess: (session) => {
+            user.setSignInUserSession(session);
+            this.setTokensFromSession(session, user.getUsername());
+            this.clearPendingChallenges();
+            resolve(this.currentTokens());
+          },
+          onFailure: (err) => {
+            // A wrong code keeps the challenge alive so the user can retry
+            // without re-entering the password; a terminal failure is cleaned
+            // up by the caller's next signIn().
+            this.rejectWithMappedError(reject, err);
+          },
+        },
+        mfaType,
+      );
+    });
+  }
+
+  /**
+   * Answer a SELECT_MFA_TYPE challenge (several factors enrolled). Resolves
+   * with the follow-up challenge — normally `MFA_REQUIRED` for the chosen
+   * channel — or with tokens when the SDK completes in one step.
+   */
+  async selectMfaType(mfaType: string): Promise<SignInResult> {
+    if (!this.pendingMfaUser) {
+      throw new Error(NO_PENDING_MFA_CHALLENGE_MESSAGE);
+    }
+    const user = this.pendingMfaUser;
+    return new Promise((resolve, reject) => {
+      user.sendMFASelectionAnswer(mfaType, {
+        onSuccess: (session) => {
+          user.setSignInUserSession(session);
+          this.setTokensFromSession(session, user.getUsername());
+          this.clearPendingChallenges();
+          resolve({ challenge: null, ...this.currentTokens() });
+        },
+        onFailure: (err) => this.rejectWithMappedError(reject, err),
+        mfaRequired: (challengeName, challengeParameters) => {
+          this.pendingMfaType = mfaTypeOf(challengeName, 'SMS_MFA');
+          resolve({
+            challenge: MFA_REQUIRED,
+            mfaType: this.pendingMfaType,
+            challengeParameters: challengeParameters ?? {},
+          });
+        },
+        totpRequired: (challengeName, challengeParameters) => {
+          this.pendingMfaType = mfaTypeOf(challengeName, 'SOFTWARE_TOKEN_MFA');
+          resolve({
+            challenge: MFA_REQUIRED,
+            mfaType: this.pendingMfaType,
+            challengeParameters: challengeParameters ?? {},
+          });
+        },
+      });
+    });
+  }
+
+  /**
+   * Begin authenticator-app (TOTP) enrolment and return the shared secret the
+   * user loads into their app. Requires a live session or an MFA_SETUP
+   * challenge — both are held by the client, never persisted here.
+   *
+   * The secret is returned to the caller for display ONLY; this client never
+   * stores, logs, or transmits it.
+   */
+  async associateSoftwareToken(): Promise<string> {
+    const user = this.challengeOrCurrentUser();
+    return new Promise((resolve, reject) => {
+      user.associateSoftwareToken({
+        associateSecretCode: (secretCode) => resolve(secretCode),
+        onFailure: (err) => this.rejectWithMappedError(reject, err),
+      });
+    });
+  }
+
+  /**
+   * Finish authenticator-app enrolment with a code generated from the secret
+   * returned by `associateSoftwareToken()`. On success the session is stored
+   * (the SDK completes the pending challenge), so the caller can continue to
+   * its normal post-login routing.
+   */
+  async verifySoftwareToken(totpCode: string, friendlyDeviceName = ''): Promise<SessionTokens> {
+    const user = this.challengeOrCurrentUser();
+    return new Promise((resolve, reject) => {
+      user.verifySoftwareToken(totpCode, friendlyDeviceName, {
+        onSuccess: (session) => {
+          user.setSignInUserSession(session);
+          this.setTokensFromSession(session, user.getUsername());
+          this.clearPendingChallenges();
+          resolve(this.currentTokens());
+        },
+        onFailure: (err) => this.rejectWithMappedError(reject, err),
+      });
+    });
+  }
+
+  /** The in-flight challenge user, else the signed-in SDK user (else throws). */
+  private challengeOrCurrentUser(): CognitoUserLike {
+    if (this.pendingChallengeUser) return this.pendingChallengeUser;
+    this.initPool();
+    const current = this.pool!.getCurrentUser();
+    if (!current) throw new Error(NO_CACHED_SESSION_MESSAGE);
+    return current;
+  }
+
+  /** Drop in-flight challenge state (a new attempt starts clean). */
+  private clearPendingChallenges(): void {
+    this.pendingChallengeUser = null;
+    this.pendingMfaUser = null;
+    this.pendingMfaType = null;
   }
 
   /**
@@ -534,7 +833,7 @@ export class CognitoClient {
     this.idToken = null;
     this.accessToken = null;
     this.currentUser = null;
-    this.pendingChallengeUser = null;
+    this.clearPendingChallenges();
   }
 
   /** Return the current user's username, or `null` when not signed in. */

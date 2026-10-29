@@ -31,15 +31,21 @@ function installMockSdk(overrides: {
   authenticateUser?: (callbacks: any) => void;
   getSession?: (cb: (err: unknown, session: unknown) => void) => void;
   completeNewPasswordChallenge?: (pwd: string, attrs: unknown, callbacks: any) => void;
+  sendMFACode?: (code: string, callbacks: any, mfaType?: string) => void;
+  sendMFASelectionAnswer?: (answer: string, callbacks: any) => void;
+  associateSoftwareToken?: (callbacks: any) => void;
+  verifySoftwareToken?: (code: string, name: string, callbacks: any) => void;
   invalidSession?: boolean;
   noCurrentUser?: boolean;
 }) {
-  const captured: { pools: ConstructedPoolArgs[]; users: ConstructedUserArgs[]; setSignInUserSessionCalls: unknown[]; signOutCalls: number; poolInstances: any[] } = {
+  const captured: { pools: ConstructedPoolArgs[]; users: ConstructedUserArgs[]; setSignInUserSessionCalls: unknown[]; signOutCalls: number; poolInstances: any[]; mfaSends: Array<{ code: string; mfaType?: string }>; mfaSelections: string[] } = {
     pools: [],
     users: [],
     setSignInUserSessionCalls: [],
     signOutCalls: 0,
     poolInstances: [],
+    mfaSends: [],
+    mfaSelections: [],
   };
 
   let currentUserInstance: any = null;
@@ -92,6 +98,36 @@ function installMockSdk(overrides: {
         overrides.completeNewPasswordChallenge(_pwd, attrs, callbacks);
       } else {
         callbacks.onSuccess(makeSession('challenge-id-token', 'challenge-access-token', 'challenge-refresh-token'));
+      }
+    });
+    this.sendMFACode = vi.fn((code: string, callbacks: any, mfaType?: string) => {
+      captured.mfaSends.push({ code, mfaType });
+      if (overrides.sendMFACode) {
+        overrides.sendMFACode(code, callbacks, mfaType);
+      } else {
+        callbacks.onSuccess(makeSession('mfa-id-token', 'mfa-access-token', 'mfa-refresh-token'));
+      }
+    });
+    this.sendMFASelectionAnswer = vi.fn((answer: string, callbacks: any) => {
+      captured.mfaSelections.push(answer);
+      if (overrides.sendMFASelectionAnswer) {
+        overrides.sendMFASelectionAnswer(answer, callbacks);
+      } else {
+        callbacks.mfaRequired?.('SMS_MFA', { CODE_DELIVERY_DESTINATION: '+1***' });
+      }
+    });
+    this.associateSoftwareToken = vi.fn((callbacks: any) => {
+      if (overrides.associateSoftwareToken) {
+        overrides.associateSoftwareToken(callbacks);
+      } else {
+        callbacks.associateSecretCode('MOCK-SECRET-CODE');
+      }
+    });
+    this.verifySoftwareToken = vi.fn((code: string, name: string, callbacks: any) => {
+      if (overrides.verifySoftwareToken) {
+        overrides.verifySoftwareToken(code, name, callbacks);
+      } else {
+        callbacks.onSuccess(makeSession('totp-id-token', 'totp-access-token', 'totp-refresh-token'));
       }
     });
     currentUserInstance = this;
@@ -757,5 +793,128 @@ describe('CognitoClient — fail-closed auth state across signIn attempts', () =
     await expect(client.completeNewPassword('NewPass123!')).rejects.toThrow(
       /No pending password challenge/,
     );
+  });
+});
+
+// ─── MFA challenges (TOTP + SMS) ────────────────────────────────────────────
+//
+// Staff/owner MFA enforcement (currents-bookkeeping vrn.19) needs the client to
+// surface and complete Cognito's second-factor challenges: SOFTWARE_TOKEN_MFA
+// (authenticator app), SMS_MFA, the multi-factor SELECT_MFA_TYPE step, and the
+// MFA_SETUP enrolment path. These tests pin that state machine.
+describe('CognitoClient - MFA challenges', () => {
+  it('surfaces a TOTP challenge (totpRequired) as MFA_REQUIRED', async () => {
+    const { sdk } = installMockSdk({
+      authenticateUser: (callbacks) =>
+        callbacks.totpRequired?.('SOFTWARE_TOKEN_MFA', { FRIENDLY_DEVICE_NAME: 'app' }),
+    });
+    const client = makeClient({ sdk });
+    const result = await client.signIn('staff@example.com', 'Passw0rd!');
+    expect(result).toEqual({
+      challenge: 'MFA_REQUIRED',
+      mfaType: 'SOFTWARE_TOKEN_MFA',
+      challengeParameters: { FRIENDLY_DEVICE_NAME: 'app' },
+    });
+    expect(client.getIdToken()).toBeNull();
+  });
+
+  it('surfaces an SMS challenge (mfaRequired) as MFA_REQUIRED', async () => {
+    const { sdk } = installMockSdk({
+      authenticateUser: (callbacks) =>
+        callbacks.mfaRequired?.('SMS_MFA', { CODE_DELIVERY_DESTINATION: '+1***' }),
+    });
+    const client = makeClient({ sdk });
+    const result = await client.signIn('staff@example.com', 'Passw0rd!');
+    expect(result.challenge).toBe('MFA_REQUIRED');
+    expect((result as { mfaType: string }).mfaType).toBe('SMS_MFA');
+  });
+
+  it('completes the challenge with sendMFACode and stores the session', async () => {
+    const { sdk, captured } = installMockSdk({
+      authenticateUser: (callbacks) => callbacks.totpRequired?.('SOFTWARE_TOKEN_MFA', {}),
+    });
+    const client = makeClient({ sdk });
+    await client.signIn('staff@example.com', 'Passw0rd!');
+    const tokens = await client.sendMFACode('123456');
+    expect(tokens).toEqual({ idToken: 'mfa-id-token', accessToken: 'mfa-access-token' });
+    expect(captured.mfaSends).toEqual([{ code: '123456', mfaType: 'SOFTWARE_TOKEN_MFA' }]);
+    expect(client.getIdToken()).toBe('mfa-id-token');
+    expect(client.getUser()).toBe('staff@example.com');
+    expect(captured.setSignInUserSessionCalls).toHaveLength(1);
+  });
+
+  it('keeps the challenge alive after a wrong code so the user can retry', async () => {
+    const { sdk } = installMockSdk({
+      authenticateUser: (callbacks) => callbacks.totpRequired?.('SOFTWARE_TOKEN_MFA', {}),
+      sendMFACode: (code, callbacks) => {
+        if (code === '000000') callbacks.onFailure({ code: 'CodeMismatchException' });
+        else callbacks.onSuccess(makeSession('ok-id', 'ok-access'));
+      },
+    });
+    const client = makeClient({ sdk });
+    await client.signIn('staff@example.com', 'Passw0rd!');
+    await expect(client.sendMFACode('000000')).rejects.toThrow(/CodeMismatchException/);
+    await expect(client.sendMFACode('123456')).resolves.toEqual({
+      idToken: 'ok-id',
+      accessToken: 'ok-access',
+    });
+  });
+
+  it('rejects sendMFACode when no MFA challenge is in flight', async () => {
+    const { sdk } = installMockSdk({});
+    const client = makeClient({ sdk });
+    await expect(client.sendMFACode('123456')).rejects.toThrow(/No pending multi-factor challenge/);
+  });
+
+  it('answers SELECT_MFA_TYPE and surfaces the follow-up challenge', async () => {
+    const { sdk, captured } = installMockSdk({
+      authenticateUser: (callbacks) =>
+        callbacks.selectMFAType?.('SELECT_MFA_TYPE', {
+          MFAS_CAN_CHOOSE: '[SMS_MFA, SOFTWARE_TOKEN_MFA]',
+        }),
+    });
+    const client = makeClient({ sdk });
+    const result = await client.signIn('staff@example.com', 'Passw0rd!');
+    expect(result).toEqual({
+      challenge: 'SELECT_MFA_TYPE',
+      mfaTypes: ['SMS_MFA', 'SOFTWARE_TOKEN_MFA'],
+      challengeParameters: { MFAS_CAN_CHOOSE: '[SMS_MFA, SOFTWARE_TOKEN_MFA]' },
+    });
+    const followUp = await client.selectMfaType('SMS_MFA');
+    expect(captured.mfaSelections).toEqual(['SMS_MFA']);
+    expect(followUp.challenge).toBe('MFA_REQUIRED');
+    expect((followUp as { mfaType: string }).mfaType).toBe('SMS_MFA');
+  });
+
+  it('surfaces MFA_SETUP when the user has no enrolled factor', async () => {
+    const { sdk } = installMockSdk({
+      authenticateUser: (callbacks) => callbacks.mfaSetup?.('MFA_SETUP', {}),
+    });
+    const client = makeClient({ sdk });
+    const result = await client.signIn('staff@example.com', 'Passw0rd!');
+    expect(result).toEqual({ challenge: 'MFA_SETUP', challengeParameters: {} });
+  });
+
+  it('enrols TOTP: associateSoftwareToken returns the secret, verifySoftwareToken stores the session', async () => {
+    const { sdk, captured } = installMockSdk({
+      authenticateUser: (callbacks) => callbacks.mfaSetup?.('MFA_SETUP', {}),
+    });
+    const client = makeClient({ sdk });
+    await client.signIn('staff@example.com', 'Passw0rd!');
+    await expect(client.associateSoftwareToken()).resolves.toBe('MOCK-SECRET-CODE');
+    const tokens = await client.verifySoftwareToken('123456', 'Currents Books portal');
+    expect(tokens).toEqual({ idToken: 'totp-id-token', accessToken: 'totp-access-token' });
+    expect(client.getIdToken()).toBe('totp-id-token');
+    expect(captured.setSignInUserSessionCalls).toHaveLength(1);
+  });
+
+  it('clears a pending MFA challenge on signOut', async () => {
+    const { sdk } = installMockSdk({
+      authenticateUser: (callbacks) => callbacks.totpRequired?.('SOFTWARE_TOKEN_MFA', {}),
+    });
+    const client = makeClient({ sdk });
+    await client.signIn('staff@example.com', 'Passw0rd!');
+    client.signOut();
+    await expect(client.sendMFACode('123456')).rejects.toThrow(/No pending multi-factor challenge/);
   });
 });

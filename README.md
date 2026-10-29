@@ -281,12 +281,72 @@ if (result.challenge === null) {
 }
 ```
 
-**Returns:** `SignInResult` — either:
+**Returns:** `SignInResult` — one of:
 - `{ challenge: null, idToken: string, accessToken: string }`, or
-- `{ challenge: 'NEW_PASSWORD_REQUIRED', userAttributes, requiredAttributes }`
+- `{ challenge: 'NEW_PASSWORD_REQUIRED', userAttributes, requiredAttributes }`, or
+- `{ challenge: 'MFA_REQUIRED', mfaType: 'SMS_MFA' | 'SOFTWARE_TOKEN_MFA', challengeParameters }`, or
+- `{ challenge: 'MFA_SETUP', challengeParameters }`, or
+- `{ challenge: 'SELECT_MFA_TYPE', mfaTypes: string[], challengeParameters }`
 
 On success, the session is persisted to the injected `Storage` so it survives the
 post-login redirect.
+
+---
+
+### `sendMFACode(code)`
+
+Completes an `MFA_REQUIRED` challenge — the one-time code from the SMS message or
+from the user's authenticator app. Throws if no MFA challenge is in flight. A wrong
+code rejects but keeps the challenge alive, so the user can retry without
+re-entering the password.
+
+```typescript
+const result = await cognito.signIn('user@example.com', 'Password123!');
+if (result.challenge === 'MFA_REQUIRED') {
+  // result.mfaType === 'SOFTWARE_TOKEN_MFA' (authenticator app) or 'SMS_MFA'
+  const tokens = await cognito.sendMFACode('123456');
+}
+```
+
+**Returns:** `SessionTokens` — `{ idToken, accessToken }`, stored like a normal
+sign-in.
+
+---
+
+### `selectMfaType(mfaType)`
+
+Answers a `SELECT_MFA_TYPE` challenge (several factors enrolled) and resolves the
+follow-up challenge — normally `MFA_REQUIRED` for the chosen channel.
+
+```typescript
+if (result.challenge === 'SELECT_MFA_TYPE') {
+  const next = await cognito.selectMfaType('SOFTWARE_TOKEN_MFA');
+  if (next.challenge === 'MFA_REQUIRED') {
+    await cognito.sendMFACode('123456');
+  }
+}
+```
+
+**Returns:** `SignInResult`.
+
+---
+
+### `associateSoftwareToken()` / `verifySoftwareToken(code, friendlyName?)`
+
+In-place authenticator-app (TOTP) enrolment, used when `signIn()` returns
+`MFA_SETUP` or for a signed-in user adding a factor. `associateSoftwareToken()`
+resolves the shared secret to display **once** (the client never stores, logs, or
+transmits it); `verifySoftwareToken()` finishes the association with a code from
+the app and stores the session.
+
+```typescript
+if (result.challenge === 'MFA_SETUP') {
+  const secret = await cognito.associateSoftwareToken(); // show to the user
+  const tokens = await cognito.verifySoftwareToken('123456', 'My app');
+}
+```
+
+**Returns:** `string` (the secret) and `SessionTokens` respectively.
 
 ---
 

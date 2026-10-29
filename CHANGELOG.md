@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MFA challenges.** `signIn` now surfaces the second-factor state machine
+  instead of dropping it:
+  - `{ challenge: 'MFA_REQUIRED', mfaType, challengeParameters }` for
+    `SOFTWARE_TOKEN_MFA` (authenticator app) and `SMS_MFA`;
+  - `{ challenge: 'MFA_SETUP', challengeParameters }` when the pool requires a
+    factor the user has not enrolled yet;
+  - `{ challenge: 'SELECT_MFA_TYPE', mfaTypes, challengeParameters }` when
+    several factors are enrolled.
+  New methods: `sendMFACode(code)` (completes SMS/TOTP),
+  `selectMfaType(type)` (answers `SELECT_MFA_TYPE` and resolves the follow-up
+  challenge), `associateSoftwareToken()` (returns the enrolment secret for
+  display only) and `verifySoftwareToken(code, friendlyName)` (finishes
+  enrolment and stores the session). Challenge state is fail-closed: a new
+  `signIn` attempt, a failure, or `signOut` clears it.
+
 ### Changed
 
 - Dev-toolchain currency: `fast-check` 4.10.2 and `jsdom` 30.1.0 (latest
